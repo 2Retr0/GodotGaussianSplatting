@@ -15,21 +15,19 @@ struct RasterizeData {
 	vec4 color;
 };
 
-layout(std430, set = 0, binding = 0) restrict buffer CulledBuffer {
-	uint _pad[3];
-	uint size;
+layout(std430, set = 0, binding = 0) restrict readonly buffer CulledBuffer {
 	RasterizeData data[];
 } culled_buffer;
 
-layout (std430, set = 0, binding = 1) readonly buffer SortBuffer {
+layout (std430, set = 0, binding = 1) restrict readonly buffer SortBuffer {
     uvec2 data[];
 } sort_buffer;
 
-layout (std430, set = 0, binding = 2) restrict buffer BoundsBuffer {
+layout (std430, set = 0, binding = 2) restrict readonly buffer BoundsBuffer {
     uvec2 data[];
 } bounds;
 
-layout(rgba32f, set = 0, binding = 3) uniform restrict image2D rasterized_image;
+layout(rgba32f, set = 0, binding = 3) uniform restrict writeonly image2D rasterized_image;
 
 shared vec3[WORKGROUP_SIZE] conic_tile;
 shared vec4[WORKGROUP_SIZE] color_tile;
@@ -42,7 +40,7 @@ void main() {
     const uvec2 id_block = gl_WorkGroupID.xy;
     const uint id_local = gl_LocalInvocationIndex;
     const uint tile_id = id_block.y*grid_size.x + id_block.x;
-    const vec2 image_pos = id_block*TILE_SIZE + gl_LocalInvocationID.xy + 0.5;
+    const vec2 image_pos = id_block*TILE_SIZE + gl_LocalInvocationID.xy;
 
     uvec2 bounds = bounds.data[tile_id];
     int num_gaussians_remaining = max(0, int(bounds.y) - int(bounds.x));
@@ -75,6 +73,5 @@ void main() {
         }
         num_gaussians_remaining -= WORKGROUP_SIZE;
     }
-
-	imageStore(rasterized_image, ivec2(image_pos), vec4(blended_color, 1.0 - t));
+	imageStore(rasterized_image, ivec2(image_pos), vec4(blended_color, 1.0));
 }

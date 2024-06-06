@@ -39,8 +39,6 @@ gdscript/stretch/mode="canvas_items"
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
-window/stretch/mode="canvas_items"
-window/stretch/aspect="ignore"
 window/vsync/vsync_mode=3
 window/quality/msaa_2d=0
 window/quality/msaa_3d=1
@@ -53,4 +51,3 @@ enabled=PackedStringArray("res://addons/imgui-godot/plugin.cfg")
 [rendering]
 
 environment/defaults/default_clear_color=Color(0, 0, 0, 1)
-anti_aliasing/quality/msaa_3d=1

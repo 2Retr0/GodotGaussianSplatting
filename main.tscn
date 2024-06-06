@@ -1,8 +1,8 @@
 [gd_scene load_steps=6 format=3 uid="uid://dx4r13gqfh13"]
 
 [ext_resource type="Script" path="res://main.gd" id="1_skarq"]
-[ext_resource type="Shader" path="res://resources/spatial/main.gdshader" id="3_jj7ax"]
-[ext_resource type="Script" path="res://camera.gd" id="3_rvimx"]
+[ext_resource type="Shader" path="res://resources/shaders/spatial/main.gdshader" id="3_jj7ax"]
+[ext_resource type="Script" path="res://util/camera.gd" id="3_rvimx"]
 
 [sub_resource type="QuadMesh" id="QuadMesh_ugp31"]
 flip_faces = true

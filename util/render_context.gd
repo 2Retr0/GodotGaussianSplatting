@@ -57,12 +57,12 @@ func create_storage_buffer(size : int, data : PackedByteArray=[], usage:=Renderi
 		data += padding
 	return Descriptor.new(deletion_queue.push(device.storage_buffer_create(max(size, len(data)), data, usage)), RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER)
 
-func create_texture(dimensions : Vector2, format : RenderingDevice.DataFormat, usage:=0xA8, view:=RDTextureView.new(), data : PackedByteArray=[]) -> Descriptor:
+func create_texture(dimensions : Vector2, format : RenderingDevice.DataFormat, usage:=0x10B, view:=RDTextureView.new(), data : PackedByteArray=[]) -> Descriptor:
 	var texture_format := RDTextureFormat.new()
 	texture_format.format = format
 	texture_format.width = int(dimensions.x)
 	texture_format.height = int(dimensions.y)
-	texture_format.usage_bits = usage # Default: TEXTURE_USAGE_STORAGE_BIT | TEXTURE_USAGE_CPU_READ_BIT | TEXTURE_USAGE_CAN_COPY_FROM_BIT
+	texture_format.usage_bits = usage # Default: RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
 	return Descriptor.new(deletion_queue.push(device.texture_create(texture_format, view, data)), RenderingDevice.UNIFORM_TYPE_IMAGE)
 
 ## Creates a descriptor set. The ordering of the provided descriptors matches the binding ordering
@@ -80,23 +80,24 @@ func create_descriptor_set(descriptors : Array[Descriptor], shader : RID, descri
 ## Returns a [Callable] which will dispatch a compute pipeline (within a compute) list based on the
 ## provided block dimensions. The ordering of the provided descriptor sets matches the set ordering
 ## within the shader.
-func create_pipeline(block_dimensions : Array[int], descriptor_sets : Array, shader : RID) -> Callable:
-	assert(len(block_dimensions) == 3, 'Must specify block dimensions for all x, y, z dimensions!')
+func create_pipeline(block_dimensions : Array, descriptor_sets : Array, shader : RID) -> Callable:
 	var pipeline = deletion_queue.push(device.compute_pipeline_create(shader))
-	return func(context : RenderingContext, compute_list : int, push_constant:=[], descriptor_set_overwrites:=[]) -> void:
+	return func(context : RenderingContext, compute_list : int, push_constant:=[], descriptor_set_overwrites:=[], block_dimension_overwrites:=[]) -> void:
 		var device := context.device
-		device.compute_list_bind_compute_pipeline(compute_list, pipeline)
+		var dims := block_dimensions if block_dimension_overwrites.is_empty() else block_dimension_overwrites
+		var sets = descriptor_sets if descriptor_set_overwrites.is_empty() else descriptor_set_overwrites
+		assert(len(dims) == 3, 'Must specify block dimensions for all x, y, z dimensions!')
+		assert(len(sets) >= 1, 'Must specify at least on descriptor set!')
 		
-		if not descriptor_set_overwrites.is_empty():
-			descriptor_sets = descriptor_set_overwrites
-		for i in range(len(descriptor_sets)):
-			device.compute_list_bind_uniform_set(compute_list, descriptor_sets[i], i)
+		device.compute_list_bind_compute_pipeline(compute_list, pipeline)
+		for i in range(len(sets)):
+			device.compute_list_bind_uniform_set(compute_list, sets[i], i)
 			
 		if not push_constant.is_empty():
 			var packed_push_constant := create_push_constant(push_constant)
 			device.compute_list_set_push_constant(compute_list, packed_push_constant, packed_push_constant.size())
 			
-		device.compute_list_dispatch(compute_list, block_dimensions[0], block_dimensions[1], block_dimensions[2])
+		device.compute_list_dispatch(compute_list, dims[0], dims[1], dims[2])
 		device.compute_list_add_barrier(compute_list) # FIXME: Barrier may not always be needed, but whatever...
 
 ## Returns a [PackedFloat32Array] from the provided data, whose size is rounded up to the nearest

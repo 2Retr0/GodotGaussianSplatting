@@ -5,16 +5,16 @@
 
 layout (local_size_x = BLOCK_SIZE, local_size_y = 1, local_size_z = 1) in;
 
-layout (std430, set = 0, binding = 0) restrict buffer Histograms {
+layout (std430, set = 0, binding = 0) restrict readonly buffer Histograms {
     uint sort_buffer_size;
     uint histogram[];
 };
 
-layout (std430, set = 0, binding = 1) readonly buffer SortBuffer {
+layout (std430, set = 0, binding = 1) restrict readonly buffer SortBuffer {
     uvec2 data[];
 } sort_buffer;
 
-layout (std430, set = 0, binding = 2) restrict buffer BoundsBuffer {
+layout (std430, set = 0, binding = 2) restrict writeonly buffer BoundsBuffer {
     uvec2 data[];
 } bounds;
 

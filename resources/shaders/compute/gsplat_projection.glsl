@@ -39,34 +39,30 @@ struct RasterizeData {
 	vec4 color;
 };
 
-layout(std430, set = 0, binding = 0) restrict buffer PointBuffer {
+layout(std430, set = 0, binding = 0) restrict readonly buffer PointBuffer {
 	Point data[];
 } points;
 
-layout(std430, set = 0, binding = 1) restrict buffer CulledBuffer {
-	uint _pad[3];
-	uint size;
+layout(std430, set = 0, binding = 1) restrict writeonly buffer CulledBuffer {
 	RasterizeData data[];
 } culled_buffer;
 
-layout (std430, set = 0, binding = 2) restrict buffer Histograms {
+layout (std430, set = 0, binding = 2) restrict writeonly buffer Histograms {
 	uint sort_buffer_size;
     uint histogram[];
 };
 
-layout (std430, set = 0, binding = 3) restrict buffer SortBuffer {
+layout (std430, set = 0, binding = 3) restrict writeonly buffer SortBuffer {
     uvec2 data[];
 } sort_buffer;
 
 layout(push_constant) restrict readonly uniform PushConstants {
-	mat4 model_matrix;
 	mat4 view_matrix;
 	mat4 projection_matrix;
 	vec3 camera_pos;
-	float far_plane;
 	uint num_points;
-	bool should_sort;
-} params;
+	ivec2 dims; // Texture size
+};
 
 /** Calculates the color from given spherical harmonic coefficients and view direction. */
 #define SH_COEFFICIENTS(x) (vec3(sh_coefficients[x*3], sh_coefficients[x*3+1], sh_coefficients[x*3+2]))
@@ -114,17 +110,17 @@ vec3 get_covariance(in vec3 scale, in vec4 quaternion, in vec3 mean, in ivec2 di
 	mat3 cov_3d = transpose(a) * a;
 
 	// --- 2D Covariance Projection ---
-	vec2 tan_fov_inv = vec2(params.projection_matrix[0][0], params.projection_matrix[1][1]);
+	vec2 tan_fov_inv = vec2(projection_matrix[0][0], projection_matrix[1][1]);
 	vec2 focal = dims * 0.5*tan_fov_inv;
 	float z_inv = 1.0 / mean.z;
 
-	// vec2 tan_fov = 1.0 / tan_fov_inv;
-    // mean.xy = clamp(mean.xy*z_inv, -tan_fov*1.3, tan_fov*1.3) * mean.z;
+	vec2 tan_fov = 1.0 / tan_fov_inv;
+    mean.xy = clamp(mean.xy*z_inv, -tan_fov*1.3, tan_fov*1.3) * mean.z;
 	mat3 jacobian = mat3(
-		focal.x * z_inv, 0, -focal.x*mean.x * z_inv*z_inv,
+		focal.x * z_inv, 0, -focal.y*mean.x * z_inv*z_inv,
 	    0, focal.y * z_inv, -focal.y*mean.y * z_inv*z_inv,
 		0, 0, 0);
-	mat3 inv_view = transpose(mat3(params.view_matrix));
+	mat3 inv_view = transpose(mat3(view_matrix));
 	mat3 b = inv_view * jacobian;
 	mat3 cov_2d = transpose(b) * cov_3d * b;
 	return vec3(cov_2d[0][0] + 0.3, cov_2d[0][1], cov_2d[1][1] + 0.3);
@@ -137,18 +133,17 @@ uvec4 get_rect(in vec2 image_pos, in float radius, in uvec2 grid_size) {
 }
 
 void main() {
-	const ivec2 dims = ivec2(1920, 1080);
 	const int id = int(gl_GlobalInvocationID.x);
-	const uvec2 grid_size = (dims + TILE_SIZE - 1) / TILE_SIZE;
+	uvec2 grid_size = (dims + TILE_SIZE - 1) / TILE_SIZE;
 
-	if (id >= params.num_points) return;
+	if (id >= num_points) return;
 	
 	RasterizeData data;
 	const Point point = points.data[id];
 
 	// --- FRUSTUM CULLING ---
-	vec4 view_pos = params.view_matrix * vec4(point.position, 1);
-	vec4 clip_pos = params.projection_matrix * view_pos;
+	vec4 view_pos = view_matrix * vec4(point.position, 1);
+	vec4 clip_pos = projection_matrix * view_pos;
 	vec2 view_bounds = clip_pos.ww*1.2;
 	if (any(lessThan(clip_pos.xyz, vec3(-view_bounds, 0.0))) || any(greaterThan(clip_pos.xyz, vec3(view_bounds, clip_pos.w)))) {
 		return;
@@ -164,7 +159,7 @@ void main() {
 	if (any(lessThan(eigenvalues, vec2(0)))) return;
 
 	vec3 ndc_pos = clip_pos.xyz / clip_pos.w;
-	data.image_pos = (ndc_pos.xy + 1.0)*0.5 * dims - 0.5;
+	data.image_pos = (ndc_pos.xy + 1.0)*0.5 * (dims - 1);
 
 	// We bias the radius (w/ base=3x standard deviation) such that low opacity splats cover 
 	// fewer screen tiles. This has the effect of making the image *slightly* brighter while
@@ -173,18 +168,16 @@ void main() {
 	uvec4 rect_bounds = get_rect(data.image_pos, radius, grid_size);
 	uint num_tiles_touched = (rect_bounds.z - rect_bounds.x)*(rect_bounds.w - rect_bounds.y);
 
-	if (num_tiles_touched == 0 || radius > 400) return;
+	if (num_tiles_touched == 0 || num_tiles_touched > grid_size.x*grid_size.y/15) return;
 
 	uint sort_buffer_offset = atomicAdd(sort_buffer_size, num_tiles_touched);
-	vec3 view_dir = normalize(point.position*vec3(-1,-1,1) - params.camera_pos); // TODO: COLOR IS WRONG!
+	vec3 view_dir = normalize(point.position - camera_pos*vec3(-1,-1,1)); // TODO: COLOR IS WRONG!
 	data.conic = vec3(covariance.z, -covariance.y, covariance.x) / det; // Inverse 2D covariance
 	data.color = vec4(get_color(view_dir, point.sh_coefficients), point.opacity);
 	culled_buffer.data[id] = data;
 
 	// --- GAUSSIAN DUPLICATION ---
 	// uint depth = uint((clip_pos.z) * 512) & 0xFFFF;
-	if (!params.should_sort) return;
-
 	uint depth = uint(ndc_pos.z*ndc_pos.z*ndc_pos.z * 0xFFFF) & 0xFFFF; // Depth normalized in [0, 2^16 - 1] as a uint
 	for (uint y = rect_bounds.y; y < rect_bounds.w; ++y)
 	for (uint x = rect_bounds.x; x < rect_bounds.z; ++x) {
