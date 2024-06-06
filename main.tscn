@@ -1,0 +1,28 @@
+[gd_scene load_steps=6 format=3 uid="uid://dx4r13gqfh13"]
+
+[ext_resource type="Script" path="res://main.gd" id="1_skarq"]
+[ext_resource type="Shader" path="res://resources/spatial/main.gdshader" id="3_jj7ax"]
+[ext_resource type="Script" path="res://camera.gd" id="3_rvimx"]
+
+[sub_resource type="QuadMesh" id="QuadMesh_ugp31"]
+flip_faces = true
+size = Vector2(2, 2)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_po4ji"]
+render_priority = 0
+shader = ExtResource("3_jj7ax")
+
+[node name="Main" type="Node"]
+script = ExtResource("1_skarq")
+
+[node name="Camera" type="Camera3D" parent="."]
+transform = Transform3D(-1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0)
+script = ExtResource("3_rvimx")
+
+[node name="RenderedImage" type="MeshInstance3D" parent="."]
+cast_shadow = 0
+extra_cull_margin = 16384.0
+gi_mode = 0
+mesh = SubResource("QuadMesh_ugp31")
+surface_material_override/0 = SubResource("ShaderMaterial_po4ji")
+metadata/_edit_lock_ = true
