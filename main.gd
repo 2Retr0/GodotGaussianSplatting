@@ -18,6 +18,7 @@ func _ready() -> void:
 	viewport.files_dropped.connect(func(files : PackedStringArray):
 		if files[0].ends_with('.ply'): init_rasterizer(files[0]))
 	viewport.size_changed.connect(func():
+		rasterizer.is_loaded = false
 		rasterizer.texture_size = viewport.size)
 
 func _render_imgui() -> void:
@@ -28,13 +29,14 @@ func _render_imgui() -> void:
 	
 	var pos := camera.global_position
 	var fps := Engine.get_frames_per_second()
+	var is_loading := rasterizer and not rasterizer.is_loaded
 	ImGui.Begin(' ', [], ImGui.WindowFlags_AlwaysAutoResize | ImGui.WindowFlags_NoMove)
 	ImGui.SetWindowPos(Vector2(20, 20))
 	
 	ImGui.Text('Drag and drop .ply files on the window to load!')
 	ImGui.SeparatorText('')
-	ImGui.Text('FPS:             %d (%s)' % [fps, '%.2fms' % [1e3 / fps] if camera.is_dirty or not (rasterizer and rasterizer.is_loaded) else 'paused'])
-	ImGui.Text('Loaded File:     %s%s' % [loaded_file, ' (loading...)' if rasterizer and rasterizer.load_thread.is_alive() else ''])
+	ImGui.Text('FPS:             %d (%s)' % [fps, 'paused' if not camera.is_dirty and not is_loading else '%.2fms' % [1e3 / fps]])
+	ImGui.Text('Loaded File:     %s%s' % [loaded_file, ' (loading...)' if is_loading else ''])
 	ImGui.Text('Camera Position: %+.2f %+.2f %+.2f' % [pos.x, pos.y, pos.z])
 	ImGui.Text('#Sorted Splats:  %d' % [num_sorted_gaussians])
 	ImGui.Text('Camera FOV:     ')
@@ -60,7 +62,7 @@ func resize_window(size : Vector2i) -> void:
 func _process(delta: float) -> void:
 	_render_imgui()
 	
-	if rasterizer and (camera.is_dirty or not rasterizer.is_loaded): 
+	if camera.is_dirty or (rasterizer and not rasterizer.is_loaded): 
 		RenderingServer.call_on_render_thread(rasterizer.rasterize)
 		camera.is_dirty = false
 
