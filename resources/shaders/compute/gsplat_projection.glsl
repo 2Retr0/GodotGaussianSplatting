@@ -56,12 +56,15 @@ layout (std430, set = 0, binding = 3) restrict writeonly buffer SortBuffer {
     uvec2 data[];
 } sort_buffer;
 
-layout(push_constant) restrict readonly uniform PushConstants {
-	mat4 view_matrix;
-	mat4 projection_matrix;
+layout (std140, set = 0, binding = 4) restrict uniform Uniforms {
 	vec3 camera_pos;
 	uint num_points;
 	ivec2 dims; // Texture size
+};
+
+layout(push_constant) restrict readonly uniform PushConstants {
+	mat4 view_matrix;
+	mat4 projection_matrix;
 };
 
 /** Calculates the color from given spherical harmonic coefficients and view direction. */

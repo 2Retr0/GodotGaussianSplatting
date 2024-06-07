@@ -57,6 +57,12 @@ func create_storage_buffer(size : int, data : PackedByteArray=[], usage:=Renderi
 		data += padding
 	return Descriptor.new(deletion_queue.push(device.storage_buffer_create(max(size, len(data)), data, usage)), RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER)
 
+func create_uniform_buffer(size : int, data : PackedByteArray=[]) -> Descriptor:
+	if size > len(data):
+		var padding := PackedByteArray(); padding.resize(size - len(data))
+		data += padding
+	return Descriptor.new(deletion_queue.push(device.uniform_buffer_create(max(size, len(data)), data)), RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER)
+
 func create_texture(dimensions : Vector2, format : RenderingDevice.DataFormat, usage:=0x10B, view:=RDTextureView.new(), data : PackedByteArray=[]) -> Descriptor:
 	var texture_format := RDTextureFormat.new()
 	texture_format.format = format
@@ -104,7 +110,7 @@ func create_pipeline(block_dimensions : Array, descriptor_sets : Array, shader :
 ## multiple of 16
 func create_push_constant(data : Array) -> PackedByteArray:
 	var packed_size := len(data)*4
-	assert(packed_size <= 1024, 'Push constant size must be less than 1024 bytes!')
+	assert(packed_size <= 128, 'Push constant size must be at most 128 bytes!')
 	
 	var padding := ceili(packed_size/16.0)*16 - packed_size
 	var packed_data := PackedByteArray(); 

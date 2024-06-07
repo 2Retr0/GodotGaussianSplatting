@@ -28,6 +28,8 @@ var _e = false
 var _shift = false
 var _alt = false
 
+var is_dirty := true
+
 func _input(event):
 	# Receives mouse motion
 	if event is InputEventMouseMotion:
@@ -98,6 +100,7 @@ func _update_movement(delta):
 		_velocity.z = clamp(_velocity.z + offset.z, -_vel_multiplier, _vel_multiplier)
 	
 		translate(_velocity * delta * speed_multi)
+		if not _velocity.is_zero_approx(): is_dirty = true
 
 # Updates mouse look 
 func _update_mouselook():
@@ -114,3 +117,5 @@ func _update_mouselook():
 	
 		rotate_y(deg_to_rad(-yaw))
 		rotate_object_local(Vector3(1,0,0), deg_to_rad(-pitch))
+		
+		if pitch or yaw: is_dirty = true

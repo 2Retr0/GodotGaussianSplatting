@@ -28,6 +28,7 @@ var texture_size : Vector2i :
 		render_texture.texture_rd_rid = descriptors['output_texture'].rid
 		
 var load_thread := Thread.new()
+var is_loaded := false
 var should_terminate_thread := false
 
 func _init(point_cloud : PlyFile, output_texture_size : Vector2i, render_texture : Texture2DRD, camera : Camera3D) -> void:
@@ -50,10 +51,11 @@ func init_gpu() -> void:
 	shaders['rasterize'] = context.load_shader('res://resources/shaders/compute/gsplat_rasterize.glsl')
 	
 	# --- DESCRIPTOR PREPARATION ---
-	var num_sort_elements_max := ceili(point_cloud.num_vertices * 6) # FIXME: This should not be a static value!
+	var num_sort_elements_max := ceili(point_cloud.num_vertices * 10) # FIXME: This should not be a static value!
 	var num_workgroups := ceili(num_sort_elements_max / WORKGROUP_SIZE)
 	
 	descriptors['points'] = context.create_storage_buffer(point_cloud.num_vertices*60*4)
+	descriptors['uniforms'] = context.create_uniform_buffer(8*4)
 	descriptors['culled_points'] = context.create_storage_buffer(point_cloud.num_vertices * 16*4)
 	descriptors['sort_buffer0'] = context.create_storage_buffer(num_sort_elements_max * 2*4)
 	descriptors['sort_buffer1'] = context.create_storage_buffer(num_sort_elements_max * 2*4)
@@ -61,7 +63,7 @@ func init_gpu() -> void:
 	descriptors['histogram'] = context.create_storage_buffer(4 + num_workgroups * RADIX_SORT_BINS * 4)
 	descriptors['output_texture'] = context.create_texture(texture_size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	
-	var projection_set := context.create_descriptor_set([descriptors['points'], descriptors['culled_points'], descriptors['histogram'], descriptors['sort_buffer0']], projection_shader, 0)
+	var projection_set := context.create_descriptor_set([descriptors['points'], descriptors['culled_points'], descriptors['histogram'], descriptors['sort_buffer0'], descriptors['uniforms']], projection_shader, 0)
 	var boundaries_set := context.create_descriptor_set([descriptors['histogram'], descriptors['sort_buffer0'], descriptors['boundaries']], shaders['boundaries'], 0)
 	var rasterize_set := context.create_descriptor_set([descriptors['culled_points'], descriptors['sort_buffer0'], descriptors['boundaries'], descriptors['output_texture']], shaders['rasterize'], 0)
 	descriptor_sets['radix_sort0'] = context.create_descriptor_set([descriptors['histogram'], descriptors['sort_buffer0'], descriptors['sort_buffer1']], radix_sort_shader, 0)
@@ -89,6 +91,9 @@ func cleanup_gpu():
 func rasterize() -> void:
 	if not context: init_gpu()
 	context.device.buffer_clear(descriptors['histogram'].rid, 0, 4)
+	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, context.create_push_constant([camera.global_position.x, camera.global_position.y, camera.global_position.z, point_cloud.num_vertices, texture_size.x, texture_size.y]))
+	
+	is_loaded = not load_thread.is_alive()
 	
 	# Run the projection pipeline. This will return how many duplicated points
 	# we will actually need to sort after culling.
@@ -128,8 +133,4 @@ func _get_projection_pipeline_push_constant() -> Array:
 		proj.x[0], proj.x[1], proj.x[2], 0.0, 
 		proj.y[0], proj.y[1], proj.y[2], 0.0,
 		proj.z[0], proj.z[1], proj.z[2],-1.0,
-		proj.w[0], proj.w[1], proj.w[2], 0.0,
-		
-		camera.global_position.x, camera.global_position.y, camera.global_position.z,
-		point_cloud.num_vertices,
-		texture_size.x, texture_size.y]
+		proj.w[0], proj.w[1], proj.w[2], 0.0]
