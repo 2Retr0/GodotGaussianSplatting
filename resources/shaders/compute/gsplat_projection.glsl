@@ -168,7 +168,7 @@ void main() {
 	uvec4 rect_bounds = get_rect(data.image_pos, radius, grid_size);
 	uint num_tiles_touched = (rect_bounds.z - rect_bounds.x)*(rect_bounds.w - rect_bounds.y);
 
-	if (num_tiles_touched == 0 || num_tiles_touched > grid_size.x*grid_size.y/15) return;
+	if (num_tiles_touched == 0 || num_tiles_touched > grid_size.x*grid_size.y/3) return;
 
 	uint sort_buffer_offset = atomicAdd(sort_buffer_size, num_tiles_touched);
 	vec3 view_dir = normalize(point.position - camera_pos*vec3(-1,-1,1)); // TODO: COLOR IS WRONG!

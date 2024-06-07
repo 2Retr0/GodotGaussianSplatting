@@ -15,22 +15,22 @@ var point_cloud : PlyFile
 var render_texture : Texture2DRD
 var camera : Camera3D
 
-var texture_size : Vector2 :
+var texture_size : Vector2i :
 	set(value):
 		texture_size = value
 		if not descriptors.has('output_texture') or not context: return
 		# Rebuild boundaries and rasterize pielines (since those depend on texture size)
-		descriptors['boundaries'] = context.create_storage_buffer(ceili(value.x * value.y / (TILE_SIZE*TILE_SIZE)) * 2*4)
+		descriptors['boundaries'] = context.create_storage_buffer(ceili(float(value.x * value.y) / (TILE_SIZE*TILE_SIZE)) * 2*4)
 		descriptors['output_texture'] = context.create_texture(value, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 
 		pipelines['boundaries'] = context.create_pipeline([], [context.create_descriptor_set([descriptors['histogram'], descriptors['sort_buffer0'], descriptors['boundaries']], shaders['boundaries'], 0)], shaders['boundaries'])
-		pipelines['rasterize'] = context.create_pipeline([ceili(value.x/TILE_SIZE), ceili(value.y/TILE_SIZE), 1], [context.create_descriptor_set([descriptors['culled_points'], descriptors['sort_buffer0'], descriptors['boundaries'], descriptors['output_texture']], shaders['rasterize'], 0)], shaders['rasterize'])
+		pipelines['rasterize'] = context.create_pipeline([ceili(float(value.x)/TILE_SIZE), ceili(float(value.y)/TILE_SIZE), 1], [context.create_descriptor_set([descriptors['culled_points'], descriptors['sort_buffer0'], descriptors['boundaries'], descriptors['output_texture']], shaders['rasterize'], 0)], shaders['rasterize'])
 		render_texture.texture_rd_rid = descriptors['output_texture'].rid
 		
 var load_thread := Thread.new()
 var should_terminate_thread := false
 
-func _init(point_cloud : PlyFile, output_texture_size : Vector2, render_texture : Texture2DRD, camera : Camera3D) -> void:
+func _init(point_cloud : PlyFile, output_texture_size : Vector2i, render_texture : Texture2DRD, camera : Camera3D) -> void:
 	self.point_cloud = point_cloud
 	self.texture_size = output_texture_size
 	self.render_texture = render_texture
@@ -57,7 +57,7 @@ func init_gpu() -> void:
 	descriptors['culled_points'] = context.create_storage_buffer(point_cloud.num_vertices * 16*4)
 	descriptors['sort_buffer0'] = context.create_storage_buffer(num_sort_elements_max * 2*4)
 	descriptors['sort_buffer1'] = context.create_storage_buffer(num_sort_elements_max * 2*4)
-	descriptors['boundaries'] = context.create_storage_buffer(ceili(texture_size.x * texture_size.y / (TILE_SIZE*TILE_SIZE)) * 2*4)
+	descriptors['boundaries'] = context.create_storage_buffer(ceili(float(texture_size.x * texture_size.y) / (TILE_SIZE*TILE_SIZE)) * 2*4)
 	descriptors['histogram'] = context.create_storage_buffer(4 + num_workgroups * RADIX_SORT_BINS * 4)
 	descriptors['output_texture'] = context.create_texture(texture_size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	
@@ -74,7 +74,7 @@ func init_gpu() -> void:
 	pipelines['radix_sort_histogram'] = context.create_pipeline([], [], radix_sort_histogram_shader)
 	pipelines['radix_sort'] = context.create_pipeline([], [], radix_sort_shader)
 	pipelines['boundaries'] = context.create_pipeline([], [boundaries_set], shaders['boundaries'])
-	pipelines['rasterize'] = context.create_pipeline([ceili(texture_size.x/TILE_SIZE), ceili(texture_size.y/TILE_SIZE), 1], [rasterize_set], shaders['rasterize'])
+	pipelines['rasterize'] = context.create_pipeline([ceili(float(texture_size.x)/TILE_SIZE), ceili(float(texture_size.y)/TILE_SIZE), 1], [rasterize_set], shaders['rasterize'])
 	
 	# Begin loading splats asynchronously
 	load_thread.start(PlyFile.load_gaussian_splats.bind(point_cloud, context.device, descriptors['points'].rid, func(): return should_terminate_thread))
@@ -98,7 +98,7 @@ func rasterize() -> void:
 	
 	var num_to_sort := float(context.device.buffer_get_data(descriptors['histogram'].rid, 0, 4).decode_u32(0))
 	var radix_sort_dims := [ceili(num_to_sort / NUM_BLOCKS_PER_WORKGROUP), 1, 1]
-	var boundaries_dims := [ceili(num_to_sort / 256.0), 1, 1]
+	var boundaries_dims := [ceili(num_to_sort / 256), 1, 1]
 	if num_to_sort <= 0: return
 	
 	# Then, run the sort and rasterize pipelines with block sizes based on the
@@ -132,4 +132,4 @@ func _get_projection_pipeline_push_constant() -> Array:
 		
 		camera.global_position.x, camera.global_position.y, camera.global_position.z,
 		point_cloud.num_vertices,
-		int(texture_size.x), int(texture_size.y)]
+		texture_size.x, texture_size.y]
