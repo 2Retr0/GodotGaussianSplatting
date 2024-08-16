@@ -4,8 +4,8 @@ class_name FreeLookCamera extends Camera3D
 const SHIFT_MULTIPLIER = 2.5
 const ALT_MULTIPLIER = 1.0 / SHIFT_MULTIPLIER
 
-
 @export_range(0.0, 1.0) var sensitivity: float = 0.25
+@export var enable_camera_movement := true
 
 # Mouse state
 var _mouse_position = Vector2(0.0, 0.0)
@@ -39,7 +39,8 @@ func _input(event):
 	if event is InputEventMouseButton:
 		match event.button_index:
 			MOUSE_BUTTON_RIGHT: # Only allows rotation if right click down
-				Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED if event.pressed else Input.MOUSE_MODE_VISIBLE)
+				if enable_camera_movement:
+					Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED if event.pressed else Input.MOUSE_MODE_VISIBLE)
 			MOUSE_BUTTON_WHEEL_UP: # Increases max velocity
 				_vel_multiplier = clamp(_vel_multiplier * 1.1, 0.2, 20)
 			MOUSE_BUTTON_WHEEL_DOWN: # Decereases max velocity
@@ -119,3 +120,13 @@ func _update_mouselook():
 		rotate_object_local(Vector3(1,0,0), deg_to_rad(-pitch))
 		
 		if pitch or yaw: is_dirty = true
+
+func _set(property : StringName, value : Variant) -> bool:
+	if property not in self:
+		return false
+	else:
+		match property:
+			'fov':
+				fov = value
+				is_dirty = true
+		return true

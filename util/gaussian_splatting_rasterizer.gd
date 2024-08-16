@@ -20,9 +20,15 @@ var texture_size : Vector2i :
 		texture_size = value
 		if not descriptors.has('output_texture') or not context: return
 		# Rebuild boundaries and rasterize pielines (since those depend on texture size)
+		render_texture = Texture2DRD.new()
+		context.device.free_rid(descriptors['boundaries'].rid)
+		context.device.free_rid(descriptors['output_texture'].rid)
+		# FIXME: ERM MEMORY LEAK?!
+		#context.device.free_rid(pipelines['boundaries'])
+		#context.device.free_rid(pipelines['rasterize'])
+		
 		descriptors['boundaries'] = context.create_storage_buffer(ceili(float(value.x * value.y) / (TILE_SIZE*TILE_SIZE)) * 2*4)
 		descriptors['output_texture'] = context.create_texture(value, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
-
 		pipelines['boundaries'] = context.create_pipeline([], [context.create_descriptor_set([descriptors['histogram'], descriptors['sort_buffer0'], descriptors['boundaries']], shaders['boundaries'], 0)], shaders['boundaries'])
 		pipelines['rasterize'] = context.create_pipeline([ceili(float(value.x)/TILE_SIZE), ceili(float(value.y)/TILE_SIZE), 1], [context.create_descriptor_set([descriptors['culled_points'], descriptors['sort_buffer0'], descriptors['boundaries'], descriptors['output_texture']], shaders['rasterize'], 0)], shaders['rasterize'])
 		render_texture.texture_rd_rid = descriptors['output_texture'].rid
@@ -91,7 +97,7 @@ func cleanup_gpu():
 func rasterize() -> void:
 	if not context: init_gpu()
 	context.device.buffer_clear(descriptors['histogram'].rid, 0, 4)
-	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, context.create_push_constant([camera.global_position.x, camera.global_position.y, camera.global_position.z, point_cloud.num_vertices, texture_size.x, texture_size.y]))
+	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, RenderingContext.create_push_constant([camera.global_position.x, camera.global_position.y, camera.global_position.z, point_cloud.num_vertices, texture_size.x, texture_size.y]))
 	
 	is_loaded = not load_thread.is_alive()
 	
@@ -110,9 +116,10 @@ func rasterize() -> void:
 	# amount of points to sort determined in the projection pipeline.
 	compute_list = context.compute_list_begin()
 	for shift in range(0, 32, 8):
-		var descriptor_set = [descriptor_sets['radix_sort%d' % ((shift / 8) % 2)]]
-		pipelines['radix_sort_histogram'].call(context, compute_list, [shift], descriptor_set, radix_sort_dims)
-		pipelines['radix_sort'].call(context, compute_list, [shift], descriptor_set, radix_sort_dims)
+		var descriptor_set := [descriptor_sets['radix_sort%d' % ((shift / 8) % 2)]]
+		var push_constant := RenderingContext.create_push_constant([shift])
+		pipelines['radix_sort_histogram'].call(context, compute_list, push_constant, descriptor_set, radix_sort_dims)
+		pipelines['radix_sort'].call(context, compute_list, push_constant, descriptor_set, radix_sort_dims)
 	pipelines['boundaries'].call(context, compute_list, [], [], boundaries_dims)
 	pipelines['rasterize'].call(context, compute_list)
 	context.compute_list_end()
@@ -121,7 +128,7 @@ func _get_projection_pipeline_push_constant() -> Array:
 	assert(camera and point_cloud, 'A Camera3D and PlyFile must be set!')
 	var proj := camera.get_camera_projection()
 	var view := Projection(camera.get_camera_transform())
-	return [
+	return RenderingContext.create_push_constant([
 		# --- View Matrix ---
 		# Since (we assume) camera transform is orthonormal, the view matrix
 		# (i.e., its inverse) is just the transpose.
@@ -133,4 +140,4 @@ func _get_projection_pipeline_push_constant() -> Array:
 		proj.x[0], proj.x[1], proj.x[2], 0.0, 
 		proj.y[0], proj.y[1], proj.y[2], 0.0,
 		proj.z[0], proj.z[1], proj.z[2],-1.0,
-		proj.w[0], proj.w[1], proj.w[2], 0.0]
+		proj.w[0], proj.w[1], proj.w[2], 0.0 ])

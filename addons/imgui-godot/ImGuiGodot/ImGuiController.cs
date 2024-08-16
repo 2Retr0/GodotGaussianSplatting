@@ -36,13 +36,27 @@ public partial class ImGuiController : Node
 
         CheckContentScale();
 
-        Node cfgScene = ResourceLoader.Load<PackedScene>("res://addons/imgui-godot/Config.tscn")
-            .Instantiate();
-        Resource cfg = (Resource)cfgScene.Get("Config") ?? (Resource)((GDScript)GD.Load(
-            "res://addons/imgui-godot/scripts/ImGuiConfig.gd")).New();
-        cfgScene.Free();
+        string cfgPath = (string)ProjectSettings.GetSetting("addons/imgui/config", "");
+        Resource? cfg = null;
+        if (ResourceLoader.Exists(cfgPath))
+        {
+            cfg = ResourceLoader.Load(cfgPath);
+            float scale = (float)cfg.Get("Scale");
+            bool cfgok = scale > 0.0f;
 
-        State.Init(cfg);
+            if (!cfgok)
+            {
+                GD.PushError($"imgui-godot: config not a valid ImGuiConfig resource: {cfgPath}");
+                cfg = null;
+            }
+        }
+        else if (cfgPath.Length > 0)
+        {
+            GD.PushError($"imgui-godot: config does not exist: {cfgPath}");
+        }
+
+        State.Init(cfg ?? (Resource)((GDScript)GD.Load(
+                "res://addons/imgui-godot/scripts/ImGuiConfig.gd")).New());
 
         _helper = new ImGuiControllerHelper();
         AddChild(_helper);
@@ -54,6 +68,7 @@ public partial class ImGuiController : Node
     public override void _Ready()
     {
         ProcessPriority = int.MaxValue;
+        ProcessMode = ProcessModeEnum.Always;
     }
 
     public override void _ExitTree()
@@ -103,13 +118,15 @@ public partial class ImGuiController : Node
                 AddChild(newLayer);
             else
                 window.AddChild(newLayer);
-            ImGui.GetIO().BackendFlags |= ImGuiBackendFlags.PlatformHasViewports;
+            ImGui.GetIO().BackendFlags |= ImGuiBackendFlags.PlatformHasViewports
+                | ImGuiBackendFlags.HasMouseHoveredViewport;
         }
         else if (vp is SubViewport svp)
         {
             State.Instance.Input = new InputLocal();
             svp.AddChild(newLayer);
             ImGui.GetIO().BackendFlags &= ~ImGuiBackendFlags.PlatformHasViewports;
+            ImGui.GetIO().BackendFlags &= ~ImGuiBackendFlags.HasMouseHoveredViewport;
         }
         else
         {
@@ -124,6 +141,11 @@ public partial class ImGuiController : Node
         {
             GD.PrintErr("imgui-godot: scale mode `viewport` is unsupported");
         }
+    }
+
+    public static void WindowInputCallback(InputEvent evt)
+    {
+        State.Instance.Input.ProcessInput(evt);
     }
 }
 #endif

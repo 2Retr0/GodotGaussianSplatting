@@ -49,4 +49,3 @@ static func load_gaussian_splats(point_cloud : PlyFile, device : RenderingDevice
 				points[b+(k+2)+15] = p[v+(k/3+30)+9]
 		if terminator.call(): return
 		device.buffer_update(buffer, i*60*4*stride, 60*4*tile_size, points.to_byte_array())
-
