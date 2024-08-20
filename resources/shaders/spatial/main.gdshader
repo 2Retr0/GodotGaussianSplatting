@@ -1,14 +1,19 @@
 shader_type spatial;
 render_mode unshaded;
 
-uniform sampler2D render_texture : source_color;
+uniform sampler2D render_texture : source_color, filter_linear;
+
+// Source: https://gamedev.stackexchange.com/a/148088
+vec3 srgb_to_linear(vec3 x) {
+    vec3 higher = pow((x + 0.055) / 1.055, vec3(2.4));
+    vec3 lower = x / 12.92;
+	return mix(higher, lower, lessThan(x, vec3(0.04045)));
+}
 
 void vertex() {
 	POSITION = vec4(VERTEX, 1.0);
 }
 
 void fragment() {
-	vec3 col = texture(render_texture, SCREEN_UV).rgb;
-	col = mix(pow((col + 0.055) * (1.0 / (1.0 + 0.055)), vec3(2.4)), col * (1.0 / 12.92), lessThan(col, vec3(0.04045)));
-	ALBEDO = col.rgb;
+	ALBEDO = srgb_to_linear(texture(render_texture, SCREEN_UV).rgb);
 }

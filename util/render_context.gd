@@ -11,8 +11,14 @@ class DeletionQueue:
 	func flush(device : RenderingDevice) -> void:
 		# We work backwards in order of allocation when freeing resources
 		for i in range(queue.size() - 1, -1, -1):
+			if not queue[i].is_valid(): continue
 			device.free_rid(queue[i])
 		queue.clear()
+	
+	func free_rid(device : RenderingDevice, rid : RID) -> void:
+		var rid_idx := queue.find(rid)
+		assert(rid_idx != -1, 'RID was not found in deletion queue!')
+		device.free_rid(queue.pop_at(rid_idx))
 	
 class Descriptor:
 	var rid : RID
@@ -82,7 +88,7 @@ func load_shader(path : String) -> RID:
 		shader_cache[path] = deletion_queue.push(device.shader_create_from_spirv(shader_spirv))
 	return shader_cache[path]
 
-func create_storage_buffer(size : int, data : PackedByteArray=[], usage:=RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT) -> Descriptor:
+func create_storage_buffer(size : int, data : PackedByteArray=[], usage:=0) -> Descriptor:
 	if size > len(data):
 		var padding := PackedByteArray(); padding.resize(size - len(data))
 		data += padding
@@ -120,19 +126,21 @@ func create_descriptor_set(descriptors : Array[Descriptor], shader : RID, descri
 ## within the shader.
 func create_pipeline(block_dimensions : Array, descriptor_sets : Array, shader : RID) -> Callable:
 	var pipeline = deletion_queue.push(device.compute_pipeline_create(shader))
-	return func(context : RenderingContext, compute_list : int, push_constant : PackedByteArray=[], descriptor_set_overwrites:=[], block_dimension_overwrites:=[]) -> void:
+	return func(context : RenderingContext, compute_list : int, push_constant : PackedByteArray=[], descriptor_set_overwrites:=[], block_dimensions_overwrite_buffer:=RID(), block_dimensions_overwrite_buffer_byte_offset:=0) -> void:
 		var device := context.device
-		var dims := block_dimensions if block_dimension_overwrites.is_empty() else block_dimension_overwrites
 		var sets = descriptor_sets if descriptor_set_overwrites.is_empty() else descriptor_set_overwrites
-		assert(len(dims) == 3, 'Must specify block dimensions for all x, y, z dimensions!')
+		assert(len(block_dimensions) == 3 or block_dimensions_overwrite_buffer.is_valid(), 'Must specify block dimensions or specify a dispatch indirect buffer!')
 		assert(len(sets) >= 1, 'Must specify at least on descriptor set!')
-		
+
 		device.compute_list_bind_compute_pipeline(compute_list, pipeline)
+		device.compute_list_set_push_constant(compute_list, push_constant, push_constant.size())
 		for i in range(len(sets)):
 			device.compute_list_bind_uniform_set(compute_list, sets[i], i)
 			
-		device.compute_list_set_push_constant(compute_list, push_constant, push_constant.size())
-		device.compute_list_dispatch(compute_list, dims[0], dims[1], dims[2])
+		if block_dimensions_overwrite_buffer.is_valid():
+			device.compute_list_dispatch_indirect(compute_list, block_dimensions_overwrite_buffer, block_dimensions_overwrite_buffer_byte_offset)
+		else:
+			device.compute_list_dispatch(compute_list, block_dimensions[0], block_dimensions[1], block_dimensions[2])
 		device.compute_list_add_barrier(compute_list) # FIXME: Barrier may not always be needed, but whatever...
 
 ## Returns a [PackedFloat32Array] from the provided data, whose size is rounded up to the nearest

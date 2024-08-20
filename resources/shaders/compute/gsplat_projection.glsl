@@ -19,10 +19,11 @@
 #define SH_C3_6 0.5900435899266435
 
 #define TILE_SIZE (16)
+#define NUM_BLOCKS_PER_WORKGROUP (32)
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-struct Point {
+struct Splat {
 	vec3 position;
 	uint _pad;
 	vec3 scale;
@@ -35,30 +36,34 @@ struct RasterizeData {
 	vec2 image_pos;
     uint _pad0[2];
 	vec3 conic;
-	uint _pad1;
+	uint splat_idx;
 	vec4 color;
 };
 
-layout(std430, set = 0, binding = 0) restrict readonly buffer PointBuffer {
-	Point data[];
-} points;
+layout(std430, set = 0, binding = 0) restrict readonly buffer SplatsBuffer {
+	Splat splat_buffer[];
+};
 
 layout(std430, set = 0, binding = 1) restrict writeonly buffer CulledBuffer {
-	RasterizeData data[];
-} culled_buffer;
+	RasterizeData culled_buffer[];
+};
 
-layout (std430, set = 0, binding = 2) restrict writeonly buffer Histograms {
+layout (std430, set = 0, binding = 2) restrict buffer Histograms {
 	uint sort_buffer_size;
     uint histogram[];
 };
 
 layout (std430, set = 0, binding = 3) restrict writeonly buffer SortBuffer {
-    uvec2 data[];
-} sort_buffer;
+    uvec2 sort_buffer[];
+};
 
-layout (std140, set = 0, binding = 4) restrict uniform Uniforms {
+layout (std430, set = 0, binding = 4) restrict writeonly buffer BlockDimensions {
+	uint block_dims[];
+};
+
+layout (std140, set = 0, binding = 5) restrict uniform Uniforms {
 	vec3 camera_pos;
-	uint num_points;
+	uint _pad;
 	ivec2 dims; // Texture size
 };
 
@@ -137,15 +142,15 @@ uvec4 get_rect(in vec2 image_pos, in float radius, in uvec2 grid_size) {
 
 void main() {
 	const int id = int(gl_GlobalInvocationID.x);
-	uvec2 grid_size = (dims + TILE_SIZE - 1) / TILE_SIZE;
+	const uvec2 grid_size = (dims + TILE_SIZE - 1) / TILE_SIZE;
 
-	if (id >= num_points) return;
+	if (id >= splat_buffer.length()) return;
 	
 	RasterizeData data;
-	const Point point = points.data[id];
+	const Splat splat = splat_buffer[id];
 
 	// --- FRUSTUM CULLING ---
-	vec4 view_pos = view_matrix * vec4(point.position, 1);
+	vec4 view_pos = view_matrix * vec4(splat.position, 1);
 	vec4 clip_pos = projection_matrix * view_pos;
 	vec2 view_bounds = clip_pos.ww*1.2;
 	if (any(lessThan(clip_pos.xyz, vec3(-view_bounds, 0.0))) || any(greaterThan(clip_pos.xyz, vec3(view_bounds, clip_pos.w)))) {
@@ -153,7 +158,7 @@ void main() {
 	}
 	
 	// --- GAUSSIAN PROJECTION ---
-	vec3 covariance = get_covariance(point.scale, point.quaternion, view_pos.xyz, dims);
+	vec3 covariance = get_covariance(splat.scale, splat.quaternion, view_pos.xyz, dims);
 	float det = covariance.x*covariance.z - covariance.y*covariance.y;
 	if (det == 0.0 || any(lessThan(covariance.xz, vec2(0)))) return;
 
@@ -167,17 +172,18 @@ void main() {
 	// We bias the radius (w/ base=3x standard deviation) such that low opacity splats cover 
 	// fewer screen tiles. This has the effect of making the image *slightly* brighter while
 	// minimizing perceptible tile artifacts.
-	float radius = pow(point.opacity, 0.2) * 3.0*sqrt(max(eigenvalues.x, eigenvalues.y));
+	float radius = pow(splat.opacity, 0.2) * 3.0*sqrt(max(eigenvalues.x, eigenvalues.y));
 	uvec4 rect_bounds = get_rect(data.image_pos, radius, grid_size);
 	uint num_tiles_touched = (rect_bounds.z - rect_bounds.x)*(rect_bounds.w - rect_bounds.y);
 
 	if (num_tiles_touched == 0 || num_tiles_touched > grid_size.x*grid_size.y/3) return;
 
 	uint sort_buffer_offset = atomicAdd(sort_buffer_size, num_tiles_touched);
-	vec3 view_dir = normalize(point.position - camera_pos*vec3(-1,-1,1)); // TODO: COLOR IS WRONG!
+	vec3 view_dir = normalize(splat.position - camera_pos*vec3(-1,-1,1));
 	data.conic = vec3(covariance.z, -covariance.y, covariance.x) / det; // Inverse 2D covariance
-	data.color = vec4(get_color(view_dir, point.sh_coefficients), point.opacity);
-	culled_buffer.data[id] = data;
+	data.color = vec4(get_color(view_dir, splat.sh_coefficients), splat.opacity);
+	data.splat_idx = id;
+	culled_buffer[id] = data;
 
 	// --- GAUSSIAN DUPLICATION ---
 	// uint depth = uint((clip_pos.z) * 512) & 0xFFFF;
@@ -186,6 +192,11 @@ void main() {
 	for (uint x = rect_bounds.x; x < rect_bounds.z; ++x) {
 		uint tile_id = y*grid_size.x + x;
 		uint key = (tile_id << 16) | depth;
-		sort_buffer.data[sort_buffer_offset++] = uvec2(key, id);
+		sort_buffer[sort_buffer_offset++] = uvec2(key, id);
 	}
+
+	// I just put this here in hopes of reducing contensions.
+	const uint buffer_size = sort_buffer_offset + num_tiles_touched;
+	atomicMax(block_dims[0], uint(ceil(buffer_size / float(NUM_BLOCKS_PER_WORKGROUP))));
+	atomicMax(block_dims[3], uint(ceil(buffer_size / 256.0)));
 }

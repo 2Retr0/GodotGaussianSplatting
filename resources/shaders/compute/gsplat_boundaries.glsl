@@ -11,12 +11,12 @@ layout (std430, set = 0, binding = 0) restrict readonly buffer Histograms {
 };
 
 layout (std430, set = 0, binding = 1) restrict readonly buffer SortBuffer {
-    uvec2 data[];
-} sort_buffer;
+    uvec2 sort_buffer[];
+};
 
 layout (std430, set = 0, binding = 2) restrict writeonly buffer BoundsBuffer {
-    uvec2 data[];
-} bounds;
+    uvec2 bounds_buffer[];
+};
 
 shared uint[BLOCK_SIZE+1] local;
 
@@ -27,16 +27,23 @@ void main() {
 
     // Load tile into shared memory
     if (id_local == 0) {
-        local[id_local] = sort_buffer.data[id - 1].x >> 16;
+        local[id_local] = sort_buffer[id - 1].x >> 16;
     }
-    local[id_local + 1] = sort_buffer.data[id].x >> 16;
+    local[id_local + 1] = sort_buffer[id].x >> 16;
     barrier();
 
     uint tile_id_prev = local[id_local]; // Left neighbor
     uint tile_id = local[id_local + 1];
     // If tiles IDs are different, then we have found a boundary!
     if (tile_id_prev != tile_id) {
-        bounds.data[tile_id_prev].y = id;
-        bounds.data[tile_id].x = id;
+        bounds_buffer[tile_id_prev].y = id;
+        bounds_buffer[tile_id].x = id;
     }
+    // Edge case for the last tile. Since no left neighbor will ever be the last
+    // tile, the end index of the last tile *would* remain zero. To fix this,
+    // if the tile ID is the last tile, we also set the end index of the last
+    // tile to be the sort buffer size.
+    const uint last_tile_id = bounds_buffer.length() - 1;
+    if (tile_id == last_tile_id)
+        bounds_buffer[last_tile_id].y = sort_buffer_size - 1;
 }

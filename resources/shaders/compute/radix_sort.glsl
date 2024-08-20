@@ -23,12 +23,12 @@ layout (std430, set = 0, binding = 0) restrict buffer Histograms {
 };
 
 layout (std430, set = 0, binding = 1) restrict readonly buffer SortBufferIn {
-    uvec2 data[];
-} buffer_in;
+    uvec2 in_buffer[];
+};
 
 layout (std430, set = 0, binding = 2) restrict writeonly buffer SortBufferOut {
-    uvec2 data[];
-} buffer_out;
+    uvec2 out_buffer[];
+};
 
 layout (push_constant) restrict readonly uniform PushConstants {
     uint shift;
@@ -104,7 +104,7 @@ void main() {
         uint bin_id = 0;
         uint bin_offset = 0;
         if (id < size) {
-            element_in = buffer_in.data[id];
+            element_in = in_buffer[id];
             bin_id = uint(element_in[0] >> shift) & uint(RADIX_SORT_BINS - 1);
             // offset for group
             bin_offset = global_offsets[bin_id];
@@ -125,7 +125,7 @@ void main() {
                 prefix += (i == flags_bin) ? partial_count : 0U;
                 count += full_count;
             }
-            buffer_out.data[bin_offset + prefix] = element_in;
+            out_buffer[bin_offset + prefix] = element_in;
             if (prefix == count - 1) {
                 atomicAdd(global_offsets[bin_id], count);
             }

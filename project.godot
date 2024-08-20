@@ -37,8 +37,6 @@ gdscript/stretch/mode="canvas_items"
 
 [display]
 
-window/size/viewport_width=1920
-window/size/viewport_height=1080
 window/vsync/vsync_mode=3
 window/show_image=false
 
@@ -62,3 +60,4 @@ toggle_fullscreen={
 [rendering]
 
 environment/defaults/default_clear_color=Color(0, 0, 0, 1)
+anti_aliasing/quality/msaa_3d=1

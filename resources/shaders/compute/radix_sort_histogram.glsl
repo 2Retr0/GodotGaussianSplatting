@@ -18,12 +18,12 @@ layout (std430, set = 0, binding = 0) restrict buffer Histogram {
 };
 
 layout (std430, set = 0, binding = 1) restrict readonly buffer SortBufferIn {
-    uvec2 data[];
-} buffer_in;
+    uvec2 in_buffer[];
+};
 
 layout (std430, set = 0, binding = 2) restrict writeonly buffer SortBufferOut {
-    uvec2 data[];
-} buffer_out;
+    uvec2 out_buffer[];
+};
 
 layout (push_constant) restrict readonly uniform PushConstants {
     uint shift;
@@ -50,7 +50,7 @@ void main() {
         uint id = id_workgroup * NUM_BLOCKS_PER_WORKGROUP * WORKGROUP_SIZE + index * WORKGROUP_SIZE + id_local;
         if (id < size) {
             // determine the bin
-            const uint bin = uint(buffer_in.data[id][0] >> shift) & uint(RADIX_SORT_BINS - 1);
+            const uint bin = uint(in_buffer[id][0] >> shift) & uint(RADIX_SORT_BINS - 1);
             // increment the histogram_local
             atomicAdd(histogram_local[bin], 1U);
         }

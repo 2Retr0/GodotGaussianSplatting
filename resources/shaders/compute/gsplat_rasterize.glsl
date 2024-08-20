@@ -11,21 +11,21 @@ struct RasterizeData {
 	vec2 image_pos;
     uint _pad0[2];
 	vec3 conic;
-	uint _pad1;
+	uint splat_idx;
 	vec4 color;
 };
 
 layout(std430, set = 0, binding = 0) restrict readonly buffer CulledBuffer {
-	RasterizeData data[];
-} culled_buffer;
+	RasterizeData culled_buffer[];
+};
 
 layout (std430, set = 0, binding = 1) restrict readonly buffer SortBuffer {
-    uvec2 data[];
-} sort_buffer;
+    uvec2 sort_buffer[];
+};
 
 layout (std430, set = 0, binding = 2) restrict readonly buffer BoundsBuffer {
-    uvec2 data[];
-} bounds;
+    uvec2 bounds_buffer[];
+};
 
 layout(rgba32f, set = 0, binding = 3) uniform restrict writeonly image2D rasterized_image;
 
@@ -42,8 +42,9 @@ void main() {
     const uint tile_id = id_block.y*grid_size.x + id_block.x;
     const vec2 image_pos = id_block*TILE_SIZE + gl_LocalInvocationID.xy;
 
-    uvec2 bounds = bounds.data[tile_id];
-    int num_gaussians_remaining = max(0, int(bounds.y) - int(bounds.x));
+    const uvec2 bounds = bounds_buffer[tile_id];
+    const int num_gaussians = max(0, int(bounds.y) - int(bounds.x));
+    int num_gaussians_remaining = num_gaussians;
     float t = 1.0;
     vec3 blended_color = vec3(0.0);
 
@@ -51,7 +52,7 @@ void main() {
     for (uint i = 0; i < num_iterations; ++i) {
         barrier();
         // Coalesced load of the next tile of data into shared memory.
-        RasterizeData data = culled_buffer.data[sort_buffer.data[(bounds.y - num_gaussians_remaining) + id_local].y];
+        RasterizeData data = culled_buffer[sort_buffer[(bounds.y - num_gaussians_remaining) + id_local].y];
         conic_tile[id_local] = data.conic;
         color_tile[id_local] = data.color;
         image_pos_tile[id_local] = data.image_pos;
@@ -73,5 +74,7 @@ void main() {
         }
         num_gaussians_remaining -= WORKGROUP_SIZE;
     }
-	imageStore(rasterized_image, ivec2(image_pos), vec4(blended_color, 1.0));
+    vec3 heatmap_color = mix(vec3(0,0,1), vec3(1,0.1,0.1), num_gaussians*5e-4) * (1.0 - t) * 0.0;
+
+	imageStore(rasterized_image, ivec2(image_pos), vec4(blended_color + heatmap_color, 1.0));
 }

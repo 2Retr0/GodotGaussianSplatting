@@ -1,8 +1,22 @@
-[gd_scene load_steps=6 format=3 uid="uid://dx4r13gqfh13"]
+[gd_scene load_steps=9 format=3 uid="uid://dx4r13gqfh13"]
 
 [ext_resource type="Script" path="res://main.gd" id="1_skarq"]
 [ext_resource type="Shader" path="res://resources/shaders/spatial/main.gdshader" id="3_jj7ax"]
 [ext_resource type="Script" path="res://util/camera.gd" id="3_rvimx"]
+[ext_resource type="Script" path="res://util/cursor.gd" id="4_gf8y8"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_n8l1u"]
+radius = 0.025
+height = 0.05
+radial_segments = 16
+rings = 4
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_s7rbn"]
+transparency = 1
+no_depth_test = true
+shading_mode = 0
+albedo_color = Color(1, 1, 1, 0)
+grow_amount = 0.1
 
 [sub_resource type="QuadMesh" id="QuadMesh_ugp31"]
 flip_faces = true
@@ -16,8 +30,23 @@ shader = ExtResource("3_jj7ax")
 script = ExtResource("1_skarq")
 
 [node name="Camera" type="Camera3D" parent="."]
-transform = Transform3D(-1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0)
 script = ExtResource("3_rvimx")
+
+[node name="Cursor" type="MeshInstance3D" parent="Camera"]
+top_level = true
+cast_shadow = 0
+mesh = SubResource("CapsuleMesh_n8l1u")
+skeleton = NodePath("../..")
+surface_material_override/0 = SubResource("StandardMaterial3D_s7rbn")
+script = ExtResource("4_gf8y8")
+
+[node name="OrbitSwapTimer" type="Timer" parent="Camera"]
+editor_description = "Determines when after holding the orbit modifier, should the camera switch to orbit rotation mode."
+wait_time = 0.135
+one_shot = true
+
+[node name="Target" type="Node3D" parent="Camera"]
+top_level = true
 
 [node name="RenderedImage" type="MeshInstance3D" parent="."]
 cast_shadow = 0
