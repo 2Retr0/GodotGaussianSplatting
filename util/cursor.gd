@@ -5,6 +5,9 @@ const MAX_ALPHA := 0.35
 @onready var fade_tween : Tween
 @onready var material : StandardMaterial3D = get_surface_override_material(0)
 
+func set_alpha(alpha : float) -> void:
+	material.albedo_color.a = alpha
+
 func update_position(new_position : Vector3) -> void:
 	if material.albedo_color.a == 0:
 		global_position = new_position

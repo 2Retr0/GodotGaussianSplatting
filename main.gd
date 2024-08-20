@@ -1,9 +1,10 @@
+@tool
 extends Node
 
 const DEFAULT_SPLAT_PLY_FILE := 'res://resources/demo.ply'
 
-@onready var viewport : Viewport = get_viewport()
-@onready var camera : FreeLookCamera = $Camera
+@onready var viewport := EditorInterface.get_editor_viewport_3d(0) if Engine.is_editor_hint() else get_viewport()
+@onready var camera : Variant = viewport.get_camera_3d()
 @onready var material : ShaderMaterial = $RenderedImage.get_surface_override_material(0)
 @onready var camera_fov := [camera.fov]
 
@@ -11,23 +12,21 @@ var rasterizer : GaussianSplattingRasterizer
 var loaded_file : String
 var num_sorted_gaussians := '0'
 var video_memory_used := '0.00MB'
-var time_since_paused := 0.0
 var should_render_imgui := true
 var should_freeze_render := [true]
-var render_scale := [1.0]
+var render_scale := [0.7 if Engine.is_editor_hint() else 1.0]
 
 func _init() -> void:
 	DisplayServer.window_set_size(DisplayServer.screen_get_size() * 0.75)
 	DisplayServer.window_set_position(DisplayServer.screen_get_size() * 0.25 / 2.0)
 
 func _ready() -> void:
-	should_render_imgui = not Engine.is_editor_hint()
-
 	init_rasterizer(DEFAULT_SPLAT_PLY_FILE)
 	
+	viewport.size_changed.connect(reset_rasterizer_texture)
+	if Engine.is_editor_hint(): return
 	viewport.files_dropped.connect(func(files : PackedStringArray):
 		if files[0].ends_with('.ply'): init_rasterizer(files[0]))
-	viewport.size_changed.connect(reset_rasterizer_texture)
 
 func _render_imgui() -> void:
 	if Engine.get_frames_drawn() % 8 == 0 and rasterizer and rasterizer.descriptors.has('histogram'): 
@@ -41,7 +40,7 @@ func _render_imgui() -> void:
 	
 	ImGui.Text('Drag and drop .ply files on the window to load!')
 	ImGui.SeparatorText('GaussianSplatting')
-	ImGui.Text('FPS:             %d (%s)' % [fps, '%.2fms' % (1e3 / fps) if time_since_paused <= 1.0 or not should_freeze_render[0] else 'paused'])
+	ImGui.Text('FPS:             %d (%s)' % [fps, '%.2fms' % (1e3 / fps) if not $PauseTimer.is_stopped() or not should_freeze_render[0] else 'paused'])
 	ImGui.Text('Loaded File:     %s' % ['(loading...)' if rasterizer and not rasterizer.is_loaded else loaded_file])
 	ImGui.Text('VRAM Used:       %s' % video_memory_used)
 	ImGui.Text('Sorted Splats:   %s' % num_sorted_gaussians)
@@ -51,7 +50,7 @@ func _render_imgui() -> void:
 	ImGui.Text('Cursor Position: %+.2v' % $Camera/Cursor.global_position)
 	ImGui.Text('Camera Position: %+.2v' % camera.global_position)
 	ImGui.Text('Camera Mode:     %s' % FreeLookCamera.RotationMode.keys()[camera.rotation_mode].capitalize())
-	ImGui.Text('Camera FOV:     '); ImGui.SameLine(); if ImGui.SliderFloat('##fov_float', camera_fov, 20, 170): camera.fov = camera_fov[0]; camera.is_dirty = true
+	ImGui.Text('Camera FOV:     '); ImGui.SameLine(); if ImGui.SliderFloat('##fov_float', camera_fov, 20, 170): camera.fov = camera_fov[0]
 	ImGui.Dummy(Vector2(0,0)); ImGui.Separator(); ImGui.Dummy(Vector2(0,0))
 	ImGui.PushStyleColor(ImGui.Col_Text, Color.WEB_GRAY); 
 	ImGui.Text('Press %s-H to toggle GUI visibility!' % ['Cmd' if OS.get_name() == 'macOS' else 'Ctrl']); 
@@ -64,14 +63,11 @@ func _input(event: InputEvent) -> void:
 		should_render_imgui = not should_render_imgui
 		$Camera/Cursor.visible = should_render_imgui
 	elif event.is_action_pressed('toggle_fullscreen'):
-		if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_WINDOWED:
-			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
-		else:
-			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_WINDOWED else DisplayServer.WINDOW_MODE_WINDOWED)
 	elif event.is_action_pressed('ui_cancel'):
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-	elif event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and camera.rotation_mode == FreeLookCamera.RotationMode.NONE:
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if not event.pressed and camera.rotation_mode == FreeLookCamera.RotationMode.NONE:
 			var splat_pos := rasterizer.get_splat_position(event.position * render_scale[0])
 			if splat_pos == Vector3.INF: return
 			camera.set_focused_position(splat_pos)
@@ -83,7 +79,8 @@ func init_rasterizer(ply_file_path : String) -> void:
 	rasterizer = GaussianSplattingRasterizer.new(PlyFile.new(ply_file_path), viewport.size * render_scale[0], render_texture, camera)
 	loaded_file = ply_file_path.get_file()
 	material.set_shader_parameter('render_texture', render_texture)
-	camera.reset()
+	if not Engine.is_editor_hint():
+		camera.reset()
 
 func reset_rasterizer_texture() -> void:
 	rasterizer.is_loaded = false
@@ -91,17 +88,16 @@ func reset_rasterizer_texture() -> void:
 	material.set_shader_parameter('render_texture', rasterizer.render_texture)
 
 func _process(delta: float) -> void:
-	if should_render_imgui:
-		_render_imgui()
-	camera.enable_camera_movement = not ImGui.IsAnyItemHovered()
+	if not Engine.is_editor_hint():
+		if should_render_imgui:
+			_render_imgui()
+		camera.enable_camera_movement = not ImGui.IsWindowHovered(ImGui.HoveredFlags_AnyWindow)
 	
-	if camera.is_dirty or (rasterizer and not rasterizer.is_loaded): 
-		camera.is_dirty = false
-		time_since_paused = 0.0
-	else:
-		time_since_paused += delta
-	
-	if time_since_paused <= 1.0 or not should_freeze_render[0]:
+	var has_camera_updated := rasterizer.update_camera_matrices()
+	if rasterizer and (not rasterizer.is_loaded or has_camera_updated): 
+		$PauseTimer.start()
+		
+	if not $PauseTimer.is_stopped() or not should_freeze_render[0]:
 		RenderingServer.call_on_render_thread(rasterizer.rasterize)
 		Engine.max_fps = 0
 	else:
@@ -111,7 +107,7 @@ func _notification(what):
 	if what == NOTIFICATION_PREDELETE and rasterizer: 
 		RenderingServer.call_on_render_thread(rasterizer.cleanup_gpu)
 
-## Source: https://sh.reddit.com/r/godot/comments/yljjmd/comment/iuz0x43/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button
+## Source: https://reddit.com/r/godot/comments/yljjmd/comment/iuz0x43/
 static func add_number_separator(number : int, separator : String = ',') -> String:
 	var in_str := str(number)
 	var out_chars := PackedStringArray()

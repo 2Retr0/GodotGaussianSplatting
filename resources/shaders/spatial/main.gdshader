@@ -1,7 +1,7 @@
 shader_type spatial;
-render_mode unshaded;
+render_mode unshaded, fog_disabled;
 
-uniform sampler2D render_texture : source_color, filter_linear;
+uniform sampler2D render_texture : source_color, filter_linear_mipmap_anisotropic;
 
 // Source: https://gamedev.stackexchange.com/a/148088
 vec3 srgb_to_linear(vec3 x) {
@@ -11,7 +11,7 @@ vec3 srgb_to_linear(vec3 x) {
 }
 
 void vertex() {
-	POSITION = vec4(VERTEX, 1.0);
+	POSITION = vec4(VERTEX.xy, 1.0, 1.0);
 }
 
 void fragment() {

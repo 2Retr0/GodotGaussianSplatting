@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://dx4r13gqfh13"]
+[gd_scene load_steps=10 format=3 uid="uid://dx4r13gqfh13"]
 
 [ext_resource type="Script" path="res://main.gd" id="1_skarq"]
 [ext_resource type="Shader" path="res://resources/shaders/spatial/main.gdshader" id="3_jj7ax"]
@@ -22,14 +22,18 @@ grow_amount = 0.1
 flip_faces = true
 size = Vector2(2, 2)
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_po4ji"]
+[sub_resource type="Texture2DRD" id="Texture2DRD_mqpc7"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_may5e"]
 render_priority = 0
 shader = ExtResource("3_jj7ax")
+shader_parameter/render_texture = SubResource("Texture2DRD_mqpc7")
 
 [node name="Main" type="Node"]
 script = ExtResource("1_skarq")
 
 [node name="Camera" type="Camera3D" parent="."]
+current = true
 script = ExtResource("3_rvimx")
 
 [node name="Cursor" type="MeshInstance3D" parent="Camera"]
@@ -41,7 +45,7 @@ surface_material_override/0 = SubResource("StandardMaterial3D_s7rbn")
 script = ExtResource("4_gf8y8")
 
 [node name="OrbitSwapTimer" type="Timer" parent="Camera"]
-editor_description = "Determines when after holding the orbit modifier, should the camera switch to orbit rotation mode."
+editor_description = "Determines when, after holding the orbit modifier, should the camera switch to orbit rotation mode."
 wait_time = 0.135
 one_shot = true
 
@@ -53,5 +57,9 @@ cast_shadow = 0
 extra_cull_margin = 16384.0
 gi_mode = 0
 mesh = SubResource("QuadMesh_ugp31")
-surface_material_override/0 = SubResource("ShaderMaterial_po4ji")
+surface_material_override/0 = SubResource("ShaderMaterial_may5e")
 metadata/_edit_lock_ = true
+
+[node name="PauseTimer" type="Timer" parent="."]
+editor_description = "Determines when, after no camera movement, should rendering pause to save on resources."
+one_shot = true

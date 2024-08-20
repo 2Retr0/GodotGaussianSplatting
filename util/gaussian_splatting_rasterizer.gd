@@ -1,3 +1,4 @@
+@tool
 class_name GaussianSplattingRasterizer extends Resource
 
 const TILE_SIZE := 16
@@ -14,6 +15,9 @@ var descriptor_sets : Dictionary
 var point_cloud : PlyFile
 var render_texture : Texture2DRD
 var camera : Camera3D
+var camera_projection : Projection
+var camera_transform : Projection
+var camera_push_constants : PackedByteArray
 
 var default_block_dims : PackedByteArray
 var tile_dims := Vector2i.ZERO
@@ -26,8 +30,7 @@ var texture_size : Vector2i :
 		render_texture = Texture2DRD.new() # FIXME: idk why I have to do this
 		context.deletion_queue.free_rid(context.device, descriptors['bounds_buffer'].rid)
 		context.deletion_queue.free_rid(context.device, descriptors['output_texture'].rid)
-		#context.deletion_queue.free_rid(context.device, pipelines['boundaries'])
-		#context.deletion_queue.free_rid(context.device, pipelines['rasterize'])
+		
 		# FIXME: ERM MEMORY LEAK?!
 		#context.device.free_rid(pipelines['boundaries'])
 		#context.device.free_rid(pipelines['rasterize'])
@@ -40,7 +43,7 @@ var texture_size : Vector2i :
 
 var load_thread := Thread.new()
 var is_loaded := false
-var should_terminate_thread := false
+var should_terminate_thread : Array[bool] = [false]
 
 func _init(point_cloud : PlyFile, output_texture_size : Vector2i, render_texture : Texture2DRD, camera : Camera3D) -> void:
 	self.point_cloud = point_cloud
@@ -49,6 +52,7 @@ func _init(point_cloud : PlyFile, output_texture_size : Vector2i, render_texture
 	self.camera = camera
 	var block_dims : PackedInt32Array; block_dims.resize(2*3); block_dims.fill(1)
 	self.default_block_dims = block_dims.to_byte_array()
+	update_camera_matrices()
 
 func init_gpu() -> void:
 	assert(render_texture, 'An output Texture2DRD must be set!')
@@ -92,11 +96,11 @@ func init_gpu() -> void:
 	pipelines['rasterize'] = context.create_pipeline([tile_dims.x, tile_dims.y, 1], [rasterize_set], shaders['rasterize'])
 	
 	# Begin loading splats asynchronously
-	load_thread.start(PlyFile.load_gaussian_splats.bind(point_cloud, context.device, descriptors['splats'].rid, func(): return should_terminate_thread))
+	load_thread.start(PlyFile.load_gaussian_splats.bind(point_cloud, point_cloud.num_vertices / 1000, context.device, descriptors['splats'].rid, should_terminate_thread))
 	
 func cleanup_gpu():
 	if load_thread.is_alive():
-		should_terminate_thread = true
+		should_terminate_thread[0] = true
 		load_thread.wait_to_finish()
 	if context: context.free()
 	if render_texture: render_texture.texture_rd_rid = RID()
@@ -105,7 +109,7 @@ func rasterize() -> void:
 	if not context: init_gpu()
 	context.device.buffer_clear(descriptors['histogram'].rid, 0, 4) # Clear the sort buffer size
 	context.device.buffer_clear(descriptors['bounds_buffer'].rid, 0, tile_dims.x*tile_dims.y * 2*4) # Clear boundaries buffer
-	context.device.texture_clear(descriptors['output_texture'].rid, Color.BLACK, 0, 1, 0, 1)
+	#context.device.texture_clear(descriptors['output_texture'].rid, Color.WHITE, 0, 1, 0, 1)
 	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, RenderingContext.create_push_constant([camera.global_position.x, camera.global_position.y, camera.global_position.z, 0, texture_size.x, texture_size.y]))
 	context.device.buffer_update(descriptors['block_dimensions'].rid, 0, 3*4*2, default_block_dims)
 	is_loaded = not load_thread.is_alive()
@@ -113,7 +117,7 @@ func rasterize() -> void:
 	# Run the projection pipeline. This will return how many duplicated points
 	# we will actually need to sort after culling.
 	var compute_list := context.compute_list_begin()
-	pipelines['projection'].call(context, compute_list, _get_projection_pipeline_push_constant())
+	pipelines['projection'].call(context, compute_list, camera_push_constants)
 	
 	# Then, run the sort and rasterize pipelines with block sizes based on the
 	# amount of points to sort determined in the projection pipeline.
@@ -151,20 +155,26 @@ func get_splat_position(screen_position : Vector2i) -> Vector3:
 	var splat_pos := context.device.buffer_get_data(descriptors['splats'].rid, splat_idx * 60*4, 3*4)
 	return Vector3(splat_pos.decode_float(0), splat_pos.decode_float(4), splat_pos.decode_float(8))*Vector3(-1,-1,1)
 
-func _get_projection_pipeline_push_constant() -> Array:
-	assert(camera and point_cloud, 'A Camera3D and PlyFile must be set!')
-	var proj := camera.get_camera_projection()
+## Returns whether the view and projection matrices had changed since the last time this function
+## was called.
+func update_camera_matrices() -> bool:
 	var view := Projection(camera.get_camera_transform())
-	return RenderingContext.create_push_constant([
-		# --- View Matrix ---
-		# Since (we assume) camera transform is orthonormal, the view matrix
-		# (i.e., its inverse) is just the transpose.
-		-view.x[0],  view.y[0], -view.z[0], 0.0, 
-		-view.x[1],  view.y[1], -view.z[1], 0.0,
-		 view.x[2], -view.y[2],  view.z[2], 0.0,
-		-view.w.dot(view.x), -view.w.dot(-view.y), -view.w.dot(view.z), 1.0,
-		# --- Projection Matrix ---
-		proj.x[0], proj.x[1], proj.x[2], 0.0, 
-		proj.y[0], proj.y[1], proj.y[2], 0.0,
-		proj.z[0], proj.z[1], proj.z[2],-1.0,
-		proj.w[0], proj.w[1], proj.w[2], 0.0 ])
+	var proj := camera.get_camera_projection()
+	if view != camera_transform or proj != camera_projection:
+		camera_transform = view
+		camera_projection = proj
+		camera_push_constants = RenderingContext.create_push_constant([
+			# --- View Matrix ---
+			# Since (we assume) camera transform is orthonormal, the view matrix
+			# (i.e., its inverse) is just the transpose.
+			-view.x[0],  view.y[0], -view.z[0], 0.0, 
+			-view.x[1],  view.y[1], -view.z[1], 0.0,
+			 view.x[2], -view.y[2],  view.z[2], 0.0,
+			-view.w.dot(view.x), -view.w.dot(-view.y), -view.w.dot(view.z), 1.0,
+			# --- Projection Matrix ---
+			proj.x[0], proj.x[1], proj.x[2], 0.0, 
+			proj.y[0], proj.y[1], proj.y[2], 0.0,
+			proj.z[0], proj.z[1], proj.z[2],-1.0,
+			proj.w[0], proj.w[1], proj.w[2], 0.0 ])
+		return true
+	return false

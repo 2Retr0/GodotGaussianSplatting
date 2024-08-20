@@ -38,7 +38,8 @@ func _ready() -> void:
 	$OrbitSwapTimer.timeout.connect(func(): 
 		target.global_transform = global_transform
 		target.look_at_from_position(global_position, orbit_position)
-		orbit_time = 0.0
+		# Skip interpolation time if camera is already facing orbit position
+		orbit_time = 0.0 if global_basis.get_rotation_quaternion().dot(target.global_basis.get_rotation_quaternion()) < 0.99 else 1.0
 		rotation_mode = RotationMode.ORBIT)
 
 func _input(event):
@@ -103,49 +104,52 @@ func _physics_process(delta: float) -> void:
 
 # Updates camera movement
 func _update_movement(delta):
-	# Computes desired direction from key states
-	direction = Vector3(
-		(_d as float) - (_a as float), 
-		(_e as float) - (_q as float),
-		(_s as float) - (_w as float)
-	)
-	
-	# Computes the change in velocity due to desired direction and "drag"
-	# The "drag" is a constant acceleration on the camera to bring it's velocity to 0
-	var offset = (direction.normalized() * acceleration + velocity.normalized() * deceleration) * vel_multiplier * delta
-	
-	# Compute modifiers' speed multiplier
-	var speed_multi = 1
-	if _shift: speed_multi *= run_speed_multiplier
-	if _alt: speed_multi *= 1.0 / run_speed_multiplier
-	
-	# Checks if we should bother translating the camera
-	if direction == Vector3.ZERO and offset.length_squared() > velocity.length_squared():
-		velocity = Vector3.ZERO
+	if rotation_mode != RotationMode.ORBIT:
+		# Computes desired direction from key states
+		direction = Vector3(
+			(_d as float) - (_a as float), 
+			(_e as float) - (_q as float),
+			(_s as float) - (_w as float)
+		)
+		
+		# Computes the change in velocity due to desired direction and "drag"
+		# The "drag" is a constant acceleration on the camera to bring it's velocity to 0
+		var offset = (direction.normalized() * acceleration + velocity.normalized() * deceleration) * vel_multiplier * delta
+		
+		# Compute modifiers' speed multiplier
+		var speed_multi = 1
+		if _shift: speed_multi *= run_speed_multiplier
+		if _alt: speed_multi *= 1.0 / run_speed_multiplier
+		
+		# Checks if we should bother translating the camera
+		if direction == Vector3.ZERO and offset.length_squared() > velocity.length_squared():
+			velocity = Vector3.ZERO
+		else:
+			velocity = (velocity + offset).clampf(-vel_multiplier, vel_multiplier)
+			translate(velocity * delta * speed_multi)
+			
+		if not velocity.is_zero_approx():
+			target.position = global_position
+			is_dirty = true
 	else:
-		velocity = (velocity + offset).clampf(-vel_multiplier, vel_multiplier)
-		translate(velocity * delta * speed_multi)
-		
-	if not velocity.is_zero_approx():
-		target.position = global_position
-		is_dirty = true
-
-	# Smooth camera distance transition
-	if global_position.distance_squared_to(target.position) > 1e-6:
-		global_position = global_position.lerp(target.position, minf(delta*5.0, 1.0))
-		is_dirty = true
-		
-	if rotation_mode == RotationMode.ORBIT:
 		orbit_time += delta
 		# Our target position will be the target position from the cursor, but with a distance
 		# that is the current distance of the camera. This way we can still have smooth interpolation
 		# for zooming.
 		var target_pos_same_radius := orbit_position + (target.global_position - orbit_position).normalized() * (orbit_position - global_position).length()
-		var t := 1.0 - (1.0 - orbit_time*0.1)**3 if orbit_time < 0.5 else 1.0
+		# Smoothing is less at lower fps
+		var t := 1.0 - (1.0 - orbit_time*lerpf(1.0, 0.1, minf(Engine.get_frames_per_second() / 180.0, 1.0)))**3 if orbit_time < 0.4 else 1.0
 		global_basis = Basis(global_basis.get_rotation_quaternion().slerp(target.global_basis.get_rotation_quaternion(), t))
 		global_position = global_position.slerp(target_pos_same_radius, t)
+	
+	# Smooth camera distance transition
+	if global_position.distance_squared_to(target.position) > 1e-6:
+		global_position = global_position.lerp(target.position, minf(delta*5.0, 1.0))
+		is_dirty = true
 
 func set_focused_position(target_position : Vector3) -> void:
+	if not enable_camera_movement: return
+	
 	orbit_position = target_position
 	target.position = target_position + global_basis.z*2.0
 	$Cursor.update_position(orbit_position)
@@ -156,3 +160,6 @@ func reset() -> void:
 	target_orbit_position = Vector3.ZERO
 	orbit_position = -Vector3.FORWARD * 2.0
 	rotation_mode = RotationMode.NONE
+	target.position = target_orbit_position
+	$Cursor.set_alpha(0.0)
+	$Cursor.update_position(orbit_position)
