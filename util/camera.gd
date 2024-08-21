@@ -29,7 +29,6 @@ var _alt = false
 var orbit_position := -Vector3.FORWARD * 2.0
 var target_orbit_position := Vector3.ZERO
 var rotation_mode := RotationMode.NONE
-var is_dirty := true
 var orbit_time := 0.0 # Used for interpolation
 
 @onready var target : Node3D = $Target
@@ -39,7 +38,7 @@ func _ready() -> void:
 		target.global_transform = global_transform
 		target.look_at_from_position(global_position, orbit_position)
 		# Skip interpolation time if camera is already facing orbit position
-		orbit_time = 0.0 if global_basis.get_rotation_quaternion().dot(target.global_basis.get_rotation_quaternion()) < 0.99 else 1.0
+		orbit_time = 0.0 if 1.0 - global_basis.get_rotation_quaternion().dot(target.global_basis.get_rotation_quaternion()) > 1e-5 else 1.0
 		rotation_mode = RotationMode.ORBIT)
 
 func _input(event):
@@ -60,7 +59,6 @@ func _input(event):
 				rotated_pos = rotated_pos.rotated(target.global_basis.y, deg_to_rad(-offset.x)*cos(deg_to_rad(pitch)))
 				rotated_pos += orbit_position
 				target.look_at_from_position(rotated_pos, orbit_position)
-		is_dirty = true
 
 	# Receives mouse button input
 	if event is InputEventMouseButton:
@@ -127,10 +125,7 @@ func _update_movement(delta):
 		else:
 			velocity = (velocity + offset).clampf(-vel_multiplier, vel_multiplier)
 			translate(velocity * delta * speed_multi)
-			
-		if not velocity.is_zero_approx():
-			target.position = global_position
-			is_dirty = true
+		if not velocity.is_zero_approx(): target.position = global_position
 	else:
 		orbit_time += delta
 		# Our target position will be the target position from the cursor, but with a distance
@@ -145,7 +140,6 @@ func _update_movement(delta):
 	# Smooth camera distance transition
 	if global_position.distance_squared_to(target.position) > 1e-6:
 		global_position = global_position.lerp(target.position, minf(delta*5.0, 1.0))
-		is_dirty = true
 
 func set_focused_position(target_position : Vector3) -> void:
 	if not enable_camera_movement: return

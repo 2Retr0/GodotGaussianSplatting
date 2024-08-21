@@ -23,7 +23,7 @@ var default_block_dims : PackedByteArray
 var tile_dims := Vector2i.ZERO
 var texture_size : Vector2i :
 	set(value):
-		texture_size = value
+		texture_size = (value * render_scale[0]).max(Vector2i.ONE)
 		tile_dims = (texture_size + Vector2i.ONE*(TILE_SIZE - 1)) / TILE_SIZE
 		if not descriptors.has('output_texture') or not context: return
 		# Rebuild boundaries and rasterize pielines (since those depend on texture size)
@@ -36,14 +36,17 @@ var texture_size : Vector2i :
 		#context.device.free_rid(pipelines['rasterize'])
 		
 		descriptors['bounds_buffer'] = context.create_storage_buffer(tile_dims.x*tile_dims.y * 2*4)
-		descriptors['output_texture'] = context.create_texture(value, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
+		descriptors['output_texture'] = context.create_texture(texture_size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 		pipelines['boundaries'] = context.create_pipeline([], [context.create_descriptor_set([descriptors['histogram'], descriptors['sort_buffer0'], descriptors['bounds_buffer']], shaders['boundaries'], 0)], shaders['boundaries'])
 		pipelines['rasterize'] = context.create_pipeline([tile_dims.x, tile_dims.y, 1], [context.create_descriptor_set([descriptors['culled_splats'], descriptors['sort_buffer0'], descriptors['bounds_buffer'], descriptors['output_texture']], shaders['rasterize'], 0)], shaders['rasterize'])
 		render_texture.texture_rd_rid = descriptors['output_texture'].rid
 
 var load_thread := Thread.new()
 var is_loaded := false
+var should_enable_heatmap := [false]
+var render_scale := [0.7 if Engine.is_editor_hint() else 1.0]
 var should_terminate_thread : Array[bool] = [false]
+var basis_override := Basis.IDENTITY
 
 func _init(point_cloud : PlyFile, output_texture_size : Vector2i, render_texture : Texture2DRD, camera : Camera3D) -> void:
 	self.point_cloud = point_cloud
@@ -52,7 +55,6 @@ func _init(point_cloud : PlyFile, output_texture_size : Vector2i, render_texture
 	self.camera = camera
 	var block_dims : PackedInt32Array; block_dims.resize(2*3); block_dims.fill(1)
 	self.default_block_dims = block_dims.to_byte_array()
-	update_camera_matrices()
 
 func init_gpu() -> void:
 	assert(render_texture, 'An output Texture2DRD must be set!')
@@ -67,7 +69,7 @@ func init_gpu() -> void:
 	shaders['rasterize'] = context.load_shader('res://resources/shaders/compute/gsplat_rasterize.glsl')
 	
 	# --- DESCRIPTOR PREPARATION ---
-	var num_sort_elements_max := ceili(point_cloud.num_vertices * 10) # FIXME: This should not be a static value!
+	var num_sort_elements_max := point_cloud.num_vertices * 10 # FIXME: This should not be a static value!
 	var num_workgroups := ceili(num_sort_elements_max / WORKGROUP_SIZE)
 	
 	descriptors['splats'] = context.create_storage_buffer(point_cloud.num_vertices * 60*4)
@@ -107,10 +109,10 @@ func cleanup_gpu():
 
 func rasterize() -> void:
 	if not context: init_gpu()
+	var camera_pos := basis_override * camera.global_position
 	context.device.buffer_clear(descriptors['histogram'].rid, 0, 4) # Clear the sort buffer size
 	context.device.buffer_clear(descriptors['bounds_buffer'].rid, 0, tile_dims.x*tile_dims.y * 2*4) # Clear boundaries buffer
-	#context.device.texture_clear(descriptors['output_texture'].rid, Color.WHITE, 0, 1, 0, 1)
-	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, RenderingContext.create_push_constant([camera.global_position.x, camera.global_position.y, camera.global_position.z, 0, texture_size.x, texture_size.y]))
+	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, RenderingContext.create_push_constant([camera_pos.x, camera_pos.y, camera_pos.z, 0, texture_size.x, texture_size.y]))
 	context.device.buffer_update(descriptors['block_dimensions'].rid, 0, 3*4*2, default_block_dims)
 	is_loaded = not load_thread.is_alive()
 	
@@ -127,38 +129,38 @@ func rasterize() -> void:
 		pipelines['radix_sort_histogram'].call(context, compute_list, push_constant, descriptor_set, descriptors['block_dimensions'].rid, 0)
 		pipelines['radix_sort'].call(context, compute_list, push_constant, descriptor_set, descriptors['block_dimensions'].rid, 0)
 	pipelines['boundaries'].call(context, compute_list, [], [], descriptors['block_dimensions'].rid, 3*4)
-	pipelines['rasterize'].call(context, compute_list)
+	pipelines['rasterize'].call(context, compute_list, RenderingContext.create_push_constant([float(should_enable_heatmap[0])]))
 	context.compute_list_end()
-	
-	#if is_loaded and Engine.get_process_frames() % 20 == 0:
-		#var boundaries := context.device.buffer_get_data(descriptors['bounds_buffer'].rid, 0, tile_dims.x*tile_dims.y * 2*4).to_int32_array()
-		#var maximum := 0
-		#var mean := 0.0
-		#var mean_sq := 0.0
-		#var std := 0.0
-		#for i in range(0, tile_dims.x*tile_dims.y * 2, 2):
-			#var value := maxi(0, boundaries[i + 1] - boundaries[i]) # Num splats in tile
-			#var t := 1.0 / float(i/2 + 1)
-			#maximum = max(maximum, value)
-			#mean = lerpf(mean, value, t)
-			#mean_sq = lerpf(mean_sq, value**2, t)
-		#std = sqrt(abs(mean_sq - mean*mean))
-		#print('mean: %.2f, max: %d, std: %.3f' % [mean, maximum, std])
 
 func get_splat_position(screen_position : Vector2i) -> Vector3:
-	var tile := screen_position / TILE_SIZE
+	var tile : Vector2i = screen_position * render_scale[0] / TILE_SIZE
 	var tile_id := tile.y * tile_dims.x + tile.x
 	var bounds := context.device.buffer_get_data(descriptors['bounds_buffer'].rid, tile_id * 2*4, 2*4).to_int32_array()
 	if bounds[1] - bounds[0] <= 0: return Vector3.INF
 	var cull_idx := context.device.buffer_get_data(descriptors['sort_buffer0'].rid, roundi(lerpf(bounds[0], bounds[1], 0.1)) * 2*4 + 4, 4).decode_u32(0)
 	var splat_idx := context.device.buffer_get_data(descriptors['culled_splats'].rid, cull_idx * 12*4 + 7*4, 4).decode_u32(0)
 	var splat_pos := context.device.buffer_get_data(descriptors['splats'].rid, splat_idx * 60*4, 3*4)
-	return Vector3(splat_pos.decode_float(0), splat_pos.decode_float(4), splat_pos.decode_float(8))*Vector3(-1,-1,1)
+	return basis_override.inverse() * Vector3(-splat_pos.decode_float(0), -splat_pos.decode_float(4), splat_pos.decode_float(8))
+
+func get_tile_statistics() -> Vector3:
+	var boundaries := context.device.buffer_get_data(descriptors['bounds_buffer'].rid, 0, tile_dims.x*tile_dims.y * 2*4).to_int32_array()
+	var maximum := 0
+	var mean := 0.0
+	var mean_sq := 0.0
+	var std := 0.0
+	for i in range(0, tile_dims.x*tile_dims.y * 2, 2):
+		var value := maxi(0, boundaries[i + 1] - boundaries[i]) # Num splats in tile
+		var t := 1.0 / float(i/2 + 1)
+		maximum = max(maximum, value)
+		mean = lerpf(mean, value, t)
+		mean_sq = lerpf(mean_sq, value**2, t)
+	std = sqrt(abs(mean_sq - mean*mean))
+	return Vector3(maximum, mean, std)
 
 ## Returns whether the view and projection matrices had changed since the last time this function
 ## was called.
 func update_camera_matrices() -> bool:
-	var view := Projection(camera.get_camera_transform())
+	var view := Projection(Transform3D(basis_override, Vector3.ZERO) * camera.get_camera_transform())
 	var proj := camera.get_camera_projection()
 	if view != camera_transform or proj != camera_projection:
 		camera_transform = view

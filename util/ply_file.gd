@@ -47,9 +47,7 @@ static func load_gaussian_splats(point_cloud : PlyFile, stride : int, device : R
 				points[b+(k+0)+15] = p[v+(k/3+ 0)+9]
 				points[b+(k+1)+15] = p[v+(k/3+15)+9]
 				points[b+(k+2)+15] = p[v+(k/3+30)+9]
-		if should_terminate_reference[0]: 
-			print('terminating!')
-			return
+		if should_terminate_reference[0]: return
 		device.buffer_update(buffer, i*60*4*stride, 60*4*tile_size, points.to_byte_array())
 		, ceili(point_cloud.num_vertices / stride))
 	WorkerThreadPool.wait_for_group_task_completion(task_id)

@@ -29,6 +29,10 @@ layout (std430, set = 0, binding = 2) restrict readonly buffer BoundsBuffer {
 
 layout(rgba32f, set = 0, binding = 3) uniform restrict writeonly image2D rasterized_image;
 
+layout(push_constant) restrict readonly uniform PushConstants {
+	float heatmap_factor;
+};
+
 shared vec3[WORKGROUP_SIZE] conic_tile;
 shared vec4[WORKGROUP_SIZE] color_tile;
 shared vec2[WORKGROUP_SIZE] image_pos_tile;
@@ -74,7 +78,6 @@ void main() {
         }
         num_gaussians_remaining -= WORKGROUP_SIZE;
     }
-    vec3 heatmap_color = mix(vec3(0,0,1), vec3(1,0.1,0.1), num_gaussians*5e-4) * (1.0 - t) * 0.0;
-
+    vec3 heatmap_color = mix(vec3(0,0,1), vec3(1,0.2,0.2), num_gaussians*5e-4) * (1.0 - t) * heatmap_factor;
 	imageStore(rasterized_image, ivec2(image_pos), vec4(blended_color + heatmap_color, 1.0));
 }
