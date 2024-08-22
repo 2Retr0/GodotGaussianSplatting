@@ -20,7 +20,6 @@ var camera_projection : Projection
 var camera_transform : Projection
 var camera_push_constants : PackedByteArray
 
-var default_block_dims : PackedByteArray
 var tile_dims := Vector2i.ZERO
 var texture_size : Vector2i :
 	set(value):
@@ -58,8 +57,6 @@ func _init(point_cloud : PlyFile, output_texture_size : Vector2i, render_texture
 	self.texture_size = output_texture_size
 	self.render_texture = render_texture
 	self.camera = camera
-	var block_dims : PackedInt32Array; block_dims.resize(2*3); block_dims.fill(1)
-	self.default_block_dims = block_dims.to_byte_array()
 
 func init_gpu() -> void:
 	assert(render_texture, 'An output Texture2DRD must be set!')
@@ -77,15 +74,17 @@ func init_gpu() -> void:
 	# --- DESCRIPTOR PREPARATION ---
 	var num_sort_elements_max := point_cloud.num_vertices * 10 # FIXME: This should not be a static value!
 	var num_partitions := (num_sort_elements_max + PARTITION_SIZE - 1) / PARTITION_SIZE
+	var block_dims : PackedInt32Array; block_dims.resize(2*3); block_dims.fill(1)
 	
 	descriptors['splats'] = context.create_storage_buffer(point_cloud.num_vertices * 60*4)
 	descriptors['uniforms'] = context.create_uniform_buffer(8*4)
 	descriptors['culled_splats'] = context.create_storage_buffer(point_cloud.num_vertices * 12*4)
-	descriptors['grid_dimensions'] = context.create_storage_buffer(2*3*4, default_block_dims, RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
+	descriptors['grid_dimensions'] = context.create_storage_buffer(2*3*4, block_dims.to_byte_array(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
 	descriptors['histogram'] = context.create_storage_buffer(4 + (1 + 4*RADIX + num_partitions*RADIX)*4)
 	descriptors['sort_keys'] = context.create_storage_buffer(num_sort_elements_max*4*2)
 	descriptors['sort_values'] = context.create_storage_buffer(num_sort_elements_max*4*2)
 	descriptors['tile_bounds'] = context.create_storage_buffer(tile_dims.x*tile_dims.y * 2*4)
+	descriptors['tile_id_closest_splat_pos'] = context.create_storage_buffer(4*4)
 	descriptors['output_texture'] = context.create_texture(texture_size, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT)
 	
 	var projection_set := context.create_descriptor_set([descriptors['splats'], descriptors['culled_splats'], descriptors['histogram'], descriptors['sort_keys'], descriptors['sort_values'], descriptors['grid_dimensions'], descriptors['uniforms']], projection_shader, 0)
@@ -93,7 +92,7 @@ func init_gpu() -> void:
 	var radix_sort_spine_set := context.create_descriptor_set([descriptors['histogram']], radix_sort_spine_shader, 0)
 	var radix_sort_downsweep_set := context.create_descriptor_set([descriptors['histogram'], descriptors['sort_keys'], descriptors['sort_values']], radix_sort_downsweep_shader, 0)
 	var boundaries_set := context.create_descriptor_set([descriptors['histogram'], descriptors['sort_keys'], descriptors['tile_bounds']], shaders['boundaries'], 0)
-	var rasterize_set := context.create_descriptor_set([descriptors['culled_splats'], descriptors['sort_values'], descriptors['tile_bounds'], descriptors['output_texture']], shaders['rasterize'], 0)
+	var rasterize_set := context.create_descriptor_set([descriptors['culled_splats'], descriptors['sort_values'], descriptors['tile_bounds'], descriptors['tile_id_closest_splat_pos'], descriptors['output_texture']], shaders['rasterize'], 0)
 	
 	render_texture.texture_rd_rid = descriptors['output_texture'].rid
 	
@@ -119,7 +118,7 @@ func rasterize() -> void:
 	if not context: init_gpu()
 	
 	var camera_pos := basis_override * camera.global_position
-	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, RenderingContext.create_push_constant([camera_pos.x, camera_pos.y, camera_pos.z, 0, texture_size.x, texture_size.y]))
+	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, RenderingContext.create_push_constant([-camera_pos.x, -camera_pos.y, camera_pos.z, 0, texture_size.x, texture_size.y]))
 	context.device.buffer_clear(descriptors['histogram'].rid, 0, 4 + 4*RADIX*4) # Clear the sort buffer size and reset global histogram
 	context.device.buffer_clear(descriptors['tile_bounds'].rid, 0, tile_dims.x*tile_dims.y * 2*4) # Clear gsplat_boundaries buffer
 	#context.device.buffer_update(descriptors['grid_dimensions'].rid, 0, 3*4*2, default_block_dims)
@@ -139,19 +138,20 @@ func rasterize() -> void:
 		pipelines['radix_sort_spine'].call(context, compute_list, push_constant)
 		pipelines['radix_sort_downsweep'].call(context, compute_list, push_constant, [], descriptors['grid_dimensions'].rid, 0)
 
-	pipelines['gsplat_boundaries'].call(context, compute_list, [], [], descriptors['grid_dimensions'].rid, 3*4)	
-	pipelines['gsplat_rasterize'].call(context, compute_list, RenderingContext.create_push_constant([float(should_enable_heatmap[0])]))
+	pipelines['gsplat_boundaries'].call(context, compute_list, [], [], descriptors['grid_dimensions'].rid, 3*4)
+	pipelines['gsplat_rasterize'].call(context, compute_list, RenderingContext.create_push_constant([float(should_enable_heatmap[0]), -1]))
 	context.compute_list_end()
 
 func get_splat_position(screen_position : Vector2i) -> Vector3:
 	var tile : Vector2i = screen_position * render_scale[0] / TILE_SIZE
-	var tile_id := tile.y * tile_dims.x + tile.x
-	var bounds := context.device.buffer_get_data(descriptors['tile_bounds'].rid, tile_id * 2*4, 2*4).to_int32_array()
-	if bounds[1] - bounds[0] <= 0: return Vector3.INF
-	var cull_idx := context.device.buffer_get_data(descriptors['sort_values'].rid, roundi(lerpf(bounds[0], bounds[1], 0.1))*4, 4).decode_u32(0)
-	var splat_idx := context.device.buffer_get_data(descriptors['culled_splats'].rid, cull_idx * 12*4 + 7*4, 4).decode_u32(0)
-	var splat_pos := context.device.buffer_get_data(descriptors['splats'].rid, splat_idx * 60*4, 3*4)
-	return basis_override.inverse() * Vector3(-splat_pos.decode_float(0), -splat_pos.decode_float(4), splat_pos.decode_float(8))
+	var tile_id := tile.y*tile_dims.x + tile.x
+	
+	var compute_list := context.compute_list_begin()
+	pipelines['gsplat_rasterize'].call(context, compute_list, RenderingContext.create_push_constant([float(should_enable_heatmap[0]), tile_id]))
+	context.compute_list_end()
+
+	var splat_data := context.device.buffer_get_data(descriptors['tile_id_closest_splat_pos'].rid, 0, 4*4).to_float32_array()
+	return Vector3.INF if splat_data[3] == 0 else basis_override.inverse() * Vector3(-splat_data[0], -splat_data[1], splat_data[2])
 
 ## Returns whether the view and projection matrices had changed since the last time this function
 ## was called.

@@ -39,9 +39,9 @@ struct Splat {
 
 struct RasterizeData {
 	vec2 image_pos;
-    uint _pad0[2];
+    vec2 pos_xy;
 	vec3 conic;
-	uint splat_idx;
+	float pos_z;
 	vec4 color;
 };
 
@@ -190,15 +190,17 @@ void main() {
 
 	const uint buffer_size = atomicAdd(sort_buffer_size, num_tiles_touched);
 	uint sort_buffer_offset = buffer_size;
-	vec3 view_dir = normalize(splat.position - camera_pos*vec3(-1,-1,1));
+	vec3 view_dir = normalize(splat.position - camera_pos);
 	data.conic = vec3(covariance.z, -covariance.y, covariance.x) / det; // Inverse 2D covariance
 	data.color = vec4(get_color(view_dir, splat.sh_coefficients), splat.opacity);
-	data.splat_idx = id;
+	data.pos_xy = splat.position.xy;
+	data.pos_z = splat.position.z;
 	culled_buffer[id] = data;
 	barrier();
 
 	// --- UPDATE SORT KERNEL DIMENSIONS ---
 	if (subgroupElect()) {
+		uint sort_buffer_size = sort_buffer_size;
 		atomicMax(grid_dims[0], (sort_buffer_size + SORT_PARTITION_SIZE - 1) / SORT_PARTITION_SIZE); // Grid size is number of partitions
 		atomicMax(grid_dims[3], (sort_buffer_size + 256 - 1) / 256);
 	}

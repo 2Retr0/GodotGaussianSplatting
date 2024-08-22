@@ -11,9 +11,9 @@ layout (local_size_x = TILE_SIZE, local_size_y = TILE_SIZE, local_size_z = 1) in
 
 struct RasterizeData {
 	vec2 image_pos;
-    uint _pad0[2];
+    vec2 pos_xy;
 	vec3 conic;
-	uint splat_idx;
+	float pos_z;
 	vec4 color;
 };
 
@@ -29,10 +29,16 @@ layout (std430, set = 0, binding = 2) restrict readonly buffer BoundsBuffer {
     uvec2 bounds_buffer[];
 };
 
-layout(rgba32f, set = 0, binding = 3) uniform restrict writeonly image2D rasterized_image;
+layout (std430, set = 0, binding = 3) restrict writeonly buffer TargetTileSplatBuffer {
+    vec3 splat_pos; // Used only to retrieve the splat position at the cursor's tile.
+    float num_tile_splats;
+};
+
+layout(rgba32f, set = 0, binding = 4) uniform restrict writeonly image2D rasterized_image;
 
 layout(push_constant) restrict readonly uniform PushConstants {
 	float heatmap_factor;
+    uint target_tile_id;
 };
 
 shared vec3[WORKGROUP_SIZE] conic_tile;
@@ -82,4 +88,13 @@ void main() {
     }
     vec3 heatmap_color = mix(vec3(0,0,1), vec3(1,0.2,0.2), num_splats*5e-4) * (1.0 - t) * heatmap_factor;
 	imageStore(rasterized_image, ivec2(image_pos), vec4(blended_color + heatmap_color, 1.0));
+
+    // Used for when the user selects a tile to move the cursor to. This is not as accurate as checking
+    // for the closest splat in the cursor position, but it is much faster.
+    if (subgroupElect() && tile_id == target_tile_id && t != 1.0) {
+        // roundi(lerpf(bounds[0], bounds[1], 0.1))
+        RasterizeData target_data = culled_buffer[sort_buffer[bounds.x + (bounds.y - bounds.x)/10]];
+        splat_pos = vec3(target_data.pos_xy, target_data.pos_z);
+        num_tile_splats = num_splats;
+    }
 }

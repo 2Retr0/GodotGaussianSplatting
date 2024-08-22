@@ -23,6 +23,7 @@ shared uint[BLOCK_SIZE+1] local;
 void main() {
     const uint id = gl_GlobalInvocationID.x;
     const uint id_local = gl_LocalInvocationIndex;
+    const uint sort_buffer_size = sort_buffer_size;
     if (id >= sort_buffer_size || id == 0) return;
 
     // Load tile into shared memory
