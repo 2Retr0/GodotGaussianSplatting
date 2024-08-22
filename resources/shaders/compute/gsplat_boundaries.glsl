@@ -11,7 +11,7 @@ layout (std430, set = 0, binding = 0) restrict readonly buffer Histograms {
 };
 
 layout (std430, set = 0, binding = 1) restrict readonly buffer SortBuffer {
-    uvec2 sort_buffer[];
+    uint sort_buffer[];
 };
 
 layout (std430, set = 0, binding = 2) restrict writeonly buffer BoundsBuffer {
@@ -27,9 +27,9 @@ void main() {
 
     // Load tile into shared memory
     if (id_local == 0) {
-        local[id_local] = sort_buffer[id - 1].x >> 16;
+        local[id_local] = sort_buffer[id - 1] >> 16;
     }
-    local[id_local + 1] = sort_buffer[id].x >> 16;
+    local[id_local + 1] = sort_buffer[id] >> 16;
     barrier();
 
     uint tile_id_prev = local[id_local]; // Left neighbor

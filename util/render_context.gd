@@ -55,36 +55,8 @@ func compute_list_end() -> void: device.compute_list_end()
 func load_shader(path : String) -> RID:
 	const SHADER_STAGES := {'compute': RenderingDevice.SHADER_STAGE_COMPUTE, 'fragment': RenderingDevice.SHADER_STAGE_FRAGMENT, 'vertex': RenderingDevice.SHADER_STAGE_VERTEX}
 	if not shader_cache.has(path):
-		var shader_file := FileAccess.open(path, FileAccess.READ)
-		var shader_source := RDShaderSource.new()
-		var shader_text := ''
-		
-		# --- SHADER PREPROCESSING ---
-		# First line of .glsl file denotes the shader stage, we do not include
-		# this in compilation.
-		var shader_stage = shader_file.get_line().strip_edges().substr(2).left(-1)
-		assert(shader_stage in SHADER_STAGES, 'Unsupported shader stage encountered: %s' % shader_stage)
-		# Parse shader source code for #include directives and fill in with
-		# respective file contents
-		while not shader_file.eof_reached():
-			var line := shader_file.get_line()
-			if line.strip_edges().begins_with('#include'):
-				var include_path := path.get_base_dir().path_join(line.substr(10).left(-1))
-				assert(FileAccess.file_exists(include_path))
-				shader_text += FileAccess.open(include_path, FileAccess.READ).get_as_text() + '\n'
-			elif not line.strip_edges().begins_with('//'):
-				shader_text += line + '\n'
-		shader_source.set_stage_source(SHADER_STAGES[shader_stage], shader_text)
-		
-		# --- SHADER COMPILATION ---
-		var shader_spirv := device.shader_compile_spirv_from_source(shader_source)
-		var error := shader_spirv.get_stage_compile_error(SHADER_STAGES[shader_stage]).strip_edges()
-		if not error.is_empty(): 
-			printerr('Failed to compile %s!\n%s' % [path.get_file(), error])
-			var split_shader_text := shader_text.split('\n')
-			for i in len(split_shader_text):
-				printerr('%s | %s' % [str(i).lpad(len(str(len(split_shader_text)))), split_shader_text[i]])
-				
+		var shader_file := load(path)
+		var shader_spirv : RDShaderSPIRV = shader_file.get_spirv()
 		shader_cache[path] = deletion_queue.push(device.shader_create_from_spirv(shader_spirv))
 	return shader_cache[path]
 

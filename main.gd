@@ -3,7 +3,7 @@ extends Node
 
 const DEFAULT_SPLAT_PLY_FILE := 'res://resources/demo.ply'
 
-@onready var viewport := EditorInterface.get_editor_viewport_3d(0) if Engine.is_editor_hint() else get_viewport()
+@onready var viewport : Variant = EditorInterface.get_editor_viewport_3d(0) if Engine.is_editor_hint() else get_viewport()
 @onready var camera : Variant = viewport.get_camera_3d()
 @onready var material : ShaderMaterial = $RenderedImage.get_surface_override_material(0)
 @onready var camera_fov := [camera.fov]

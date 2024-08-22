@@ -1,6 +1,8 @@
 #[compute]
 #version 460
 
+#extension GL_KHR_shader_subgroup_arithmetic: enable
+
 #define SH_C0 0.28209479177387814
 #define SH_C1 0.4886025119029199
 
@@ -18,8 +20,11 @@
 #define SH_C3_5 1.445305721320277
 #define SH_C3_6 0.5900435899266435
 
-#define TILE_SIZE (16)
+#define TILE_SIZE                (16)
 #define NUM_BLOCKS_PER_WORKGROUP (32)
+#define SORT_WORKGROUP_SIZE      (512)
+#define SORT_PARTITION_DIVISION  (8)
+#define SORT_PARTITION_SIZE      (SORT_PARTITION_DIVISION * SORT_WORKGROUP_SIZE)
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -53,15 +58,19 @@ layout (std430, set = 0, binding = 2) restrict buffer Histograms {
     uint histogram[];
 };
 
-layout (std430, set = 0, binding = 3) restrict writeonly buffer SortBuffer {
-    uvec2 sort_buffer[];
+layout (std430, set = 0, binding = 3) restrict writeonly buffer SortKeysBuffer {
+    uint sort_keys[];
 };
 
-layout (std430, set = 0, binding = 4) restrict writeonly buffer BlockDimensions {
-	uint block_dims[];
+layout (std430, set = 0, binding = 4) restrict writeonly buffer SortValuesBuffer {
+    uint sort_values[];
 };
 
-layout (std140, set = 0, binding = 5) restrict uniform Uniforms {
+layout (std430, set = 0, binding = 5) restrict writeonly buffer GridDimensionsBuffer {
+	uint grid_dims[];
+};
+
+layout (std140, set = 0, binding = 6) restrict uniform Uniforms {
 	vec3 camera_pos;
 	uint _pad;
 	ivec2 dims; // Texture size
@@ -147,6 +156,7 @@ void main() {
 	if (id >= splat_buffer.length()) return;
 	
 	RasterizeData data;
+	barrier();
 	const Splat splat = splat_buffer[id];
 
 	// --- FRUSTUM CULLING ---
@@ -178,12 +188,20 @@ void main() {
 
 	if (num_tiles_touched == 0 || num_tiles_touched > grid_size.x*grid_size.y/3) return;
 
-	uint sort_buffer_offset = atomicAdd(sort_buffer_size, num_tiles_touched);
+	const uint buffer_size = atomicAdd(sort_buffer_size, num_tiles_touched);
+	uint sort_buffer_offset = buffer_size;
 	vec3 view_dir = normalize(splat.position - camera_pos*vec3(-1,-1,1));
 	data.conic = vec3(covariance.z, -covariance.y, covariance.x) / det; // Inverse 2D covariance
 	data.color = vec4(get_color(view_dir, splat.sh_coefficients), splat.opacity);
 	data.splat_idx = id;
 	culled_buffer[id] = data;
+	barrier();
+
+	// --- UPDATE SORT KERNEL DIMENSIONS ---
+	if (subgroupElect()) {
+		atomicMax(grid_dims[0], (sort_buffer_size + SORT_PARTITION_SIZE - 1) / SORT_PARTITION_SIZE); // Grid size is number of partitions
+		atomicMax(grid_dims[3], (sort_buffer_size + 256 - 1) / 256);
+	}
 
 	// --- GAUSSIAN DUPLICATION ---
 	// uint depth = uint((clip_pos.z) * 512) & 0xFFFF;
@@ -192,11 +210,8 @@ void main() {
 	for (uint x = rect_bounds.x; x < rect_bounds.z; ++x) {
 		uint tile_id = y*grid_size.x + x;
 		uint key = (tile_id << 16) | depth;
-		sort_buffer[sort_buffer_offset++] = uvec2(key, id);
+		sort_keys[sort_buffer_offset] = key;
+		sort_values[sort_buffer_offset] = id;
+		sort_buffer_offset++;
 	}
-
-	// I just put this here in hopes of reducing contensions.
-	const uint buffer_size = sort_buffer_offset + num_tiles_touched;
-	atomicMax(block_dims[0], uint(ceil(buffer_size / float(NUM_BLOCKS_PER_WORKGROUP))));
-	atomicMax(block_dims[3], uint(ceil(buffer_size / 256.0)));
 }

@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://d00mxjxb4i1jc"
+path="res://.godot/imported/radix_sort_spine.glsl-33ff035a48e3a8167f8b6eef05becf14.res"
+
+[deps]
+
+source_file="res://resources/shaders/compute/radix_sort_spine.glsl"
+dest_files=["res://.godot/imported/radix_sort_spine.glsl-33ff035a48e3a8167f8b6eef05becf14.res"]
+
+[params]
+
