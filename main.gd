@@ -12,9 +12,8 @@ var rasterizer : GaussianSplattingRasterizer
 var loaded_file : String
 var num_rendered_splats := '0'
 var video_memory_used := '0.00MB'
-var tile_statistics := ['0', '0.00', '0.00']
 var should_render_imgui := true
-var should_freeze_render := [true]
+var should_allow_render_pause := [true]
 
 func _init() -> void:
 	DisplayServer.window_set_size(DisplayServer.screen_get_size() * 0.75)
@@ -35,9 +34,6 @@ func _render_imgui() -> void:
 			num_rendered_splats = add_number_separator(num_splats) + (' (buffer overflow!)' if num_splats > rasterizer.point_cloud.num_vertices * 10 else '')
 		var vram_bytes := rasterizer.context.device.get_memory_usage(RenderingDevice.MEMORY_TOTAL)
 		video_memory_used = '%.2f%s' % [vram_bytes * (1e-6 if vram_bytes < 1e9 else 1e-9), 'MB' if vram_bytes < 1e9 else 'GB']
-	if Engine.get_frames_drawn() % 20 == 0 and rasterizer and rasterizer.context: 
-		var tile_stats := rasterizer.get_tile_statistics()
-		tile_statistics = [add_number_separator(int(tile_stats[0])), add_number_separator(roundi(tile_stats[1])), add_number_separator(roundi(tile_stats[2]))]
 	var fps := Engine.get_frames_per_second()
 	
 	ImGui.Begin(' ', [], ImGui.WindowFlags_AlwaysAutoResize | ImGui.WindowFlags_NoMove)
@@ -46,17 +42,14 @@ func _render_imgui() -> void:
 	ImGui.Text('Drag and drop .ply files on the window to load!')
 	
 	ImGui.SeparatorText('GaussianSplatting')
-	ImGui.Text('FPS:             %d (%s)' % [fps, '%.2fms' % (1e3 / fps) if not $PauseTimer.is_stopped() or not should_freeze_render[0] else 'paused'])
+	ImGui.Text('FPS:             %d (%s)' % [fps, '%.2fms' % (1e3 / fps) if not $PauseTimer.is_stopped() or not should_allow_render_pause[0] else 'paused'])
 	ImGui.Text('Loaded File:     %s' % ['(loading...)' if rasterizer and not rasterizer.is_loaded else loaded_file])
-	ImGui.Text('Allow Pause:    '); ImGui.SameLine(); ImGui.Checkbox('##pause_bool', should_freeze_render)
-	ImGui.Text('Enable Heatmap: '); ImGui.SameLine(); if ImGui.Checkbox('##heatmap_bool', rasterizer.should_enable_heatmap): rasterizer.is_loaded = false
-	ImGui.Text('Render Scale:   '); ImGui.SameLine(); if ImGui.SliderFloat('##scale_float', rasterizer.render_scale, 0.05, 1.5): reset_rasterizer_texture()
-	
-	ImGui.SeparatorText('Statistics')
 	ImGui.Text('VRAM Used:       %s' % video_memory_used)
 	ImGui.Text('Rendered Splats: %s' % num_rendered_splats)
 	ImGui.Text('Rendered Size:   %.0v' % rasterizer.texture_size)
-	ImGui.Text('Splats per Tile: (max:%s, mean:%s, std:%s)' % [tile_statistics[0], tile_statistics[1], tile_statistics[2]])
+	ImGui.Text('Allow Pause:    '); ImGui.SameLine(); ImGui.Checkbox('##pause_bool', should_allow_render_pause)
+	ImGui.Text('Enable Heatmap: '); ImGui.SameLine(); if ImGui.Checkbox('##heatmap_bool', rasterizer.should_enable_heatmap): rasterizer.is_loaded = false
+	ImGui.Text('Render Scale:   '); ImGui.SameLine(); if ImGui.SliderFloat('##scale_float', rasterizer.render_scale, 0.05, 1.5): reset_rasterizer_texture()
 	
 	ImGui.SeparatorText('Camera')
 	ImGui.Text('Cursor Position: %+.2v' % $Camera/Cursor.global_position)
@@ -116,7 +109,7 @@ func _process(delta: float) -> void:
 	if rasterizer and (not rasterizer.is_loaded or has_camera_updated): 
 		$PauseTimer.start()
 		
-	if not $PauseTimer.is_stopped() or not should_freeze_render[0]:
+	if not $PauseTimer.is_stopped() or not should_allow_render_pause[0]:
 		RenderingServer.call_on_render_thread(rasterizer.rasterize)
 		Engine.max_fps = 0
 	else:

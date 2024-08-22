@@ -50,10 +50,7 @@ func compute_list_begin() -> int: return device.compute_list_begin()
 func compute_list_end() -> void: device.compute_list_end()
 
 # --- HELPER FUNCTIONS ---
-## Loads and compiles a [code].glsl[/code] compute shader. Additionally supports
-## [code]#include[/code] directives.
 func load_shader(path : String) -> RID:
-	const SHADER_STAGES := {'compute': RenderingDevice.SHADER_STAGE_COMPUTE, 'fragment': RenderingDevice.SHADER_STAGE_FRAGMENT, 'vertex': RenderingDevice.SHADER_STAGE_VERTEX}
 	if not shader_cache.has(path):
 		var shader_file := load(path)
 		var shader_spirv : RDShaderSPIRV = shader_file.get_spirv()

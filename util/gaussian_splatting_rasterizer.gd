@@ -139,7 +139,7 @@ func rasterize() -> void:
 		pipelines['radix_sort_spine'].call(context, compute_list, push_constant)
 		pipelines['radix_sort_downsweep'].call(context, compute_list, push_constant, [], descriptors['grid_dimensions'].rid, 0)
 
-	pipelines['gsplat_boundaries'].call(context, compute_list, [], [], descriptors['grid_dimensions'].rid, 3*4)
+	pipelines['gsplat_boundaries'].call(context, compute_list, [], [], descriptors['grid_dimensions'].rid, 3*4)	
 	pipelines['gsplat_rasterize'].call(context, compute_list, RenderingContext.create_push_constant([float(should_enable_heatmap[0])]))
 	context.compute_list_end()
 
@@ -152,21 +152,6 @@ func get_splat_position(screen_position : Vector2i) -> Vector3:
 	var splat_idx := context.device.buffer_get_data(descriptors['culled_splats'].rid, cull_idx * 12*4 + 7*4, 4).decode_u32(0)
 	var splat_pos := context.device.buffer_get_data(descriptors['splats'].rid, splat_idx * 60*4, 3*4)
 	return basis_override.inverse() * Vector3(-splat_pos.decode_float(0), -splat_pos.decode_float(4), splat_pos.decode_float(8))
-
-func get_tile_statistics() -> Vector3:
-	var gsplat_boundaries := context.device.buffer_get_data(descriptors['tile_bounds'].rid, 0, tile_dims.x*tile_dims.y * 2*4).to_int32_array()
-	var maximum := 0
-	var mean := 0.0
-	var mean_sq := 0.0
-	var std := 0.0
-	for i in range(0, tile_dims.x*tile_dims.y * 2, 2):
-		var value := maxi(0, gsplat_boundaries[i + 1] - gsplat_boundaries[i]) # Num splats in tile
-		var t := 1.0 / float(i/2 + 1)
-		maximum = max(maximum, value)
-		mean = lerpf(mean, value, t)
-		mean_sq = lerpf(mean_sq, value**2, t)
-	std = sqrt(abs(mean_sq - mean*mean))
-	return Vector3(maximum, mean, std)
 
 ## Returns whether the view and projection matrices had changed since the last time this function
 ## was called.
