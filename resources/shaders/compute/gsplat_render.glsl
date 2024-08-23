@@ -3,9 +3,10 @@
 
 #extension GL_KHR_shader_subgroup_arithmetic: enable
 
-#define TILE_SIZE (16)
+#define MIN_FACTOR     (255)
+#define MIN_ALPHA      (1.0 / MIN_FACTOR)
+#define TILE_SIZE      (16)
 #define WORKGROUP_SIZE (TILE_SIZE*TILE_SIZE)
-#define MIN_ALPHA (1.0 / 255.0)
 
 layout (local_size_x = TILE_SIZE, local_size_y = TILE_SIZE, local_size_z = 1) in;
 
@@ -44,8 +45,10 @@ layout(push_constant) restrict readonly uniform PushConstants {
 shared vec3[WORKGROUP_SIZE] conic_tile;
 shared vec4[WORKGROUP_SIZE] color_tile;
 shared vec2[WORKGROUP_SIZE] image_pos_tile;
+shared uint shared_t;
 
 void main() {
+    shared_t = ~0; // Initialize shared alpha to MAX_UINT
 	const ivec2 dims = imageSize(rasterized_image);
 	const uvec2 grid_size = (dims + TILE_SIZE - 1) / TILE_SIZE;
     
@@ -60,7 +63,7 @@ void main() {
 
     vec3 blended_color = vec3(0.0); //imageLoad(rasterized_image, ivec2(image_pos)).rgb;
     float t = 1.0;
-    for (uint i = 0; i < num_iterations; ++i) {
+    for (uint i = 0; i < num_iterations && shared_t > MIN_FACTOR; ++i) {
         const uint sort_offset = WORKGROUP_SIZE*i;
         const uint chunk_size = min(WORKGROUP_SIZE, num_splats - sort_offset);
 
@@ -70,6 +73,7 @@ void main() {
         conic_tile[id_local] = data.conic;
         color_tile[id_local] = data.color;
         image_pos_tile[id_local] = data.image_pos;
+        shared_t = 0; // Reset shared alpha
         barrier();
 
         for (uint j = 0; j < chunk_size && t > MIN_ALPHA; ++j) {
@@ -85,6 +89,13 @@ void main() {
             blended_color += color.rgb * alpha * t;
             t *= (1.0 - alpha);
         }
+
+        // We add up all the alpha across the block; if it is greater than MIN_FACTOR, the
+        // alpha of the entire block will be greater than MIN_ALPHA.
+        // In such case, some threads still have splats to draw and all threads in the block
+        // will continue to loop fetching the remaining splats into shared memory.
+        atomicAdd(shared_t, uint(t*MIN_FACTOR));
+        barrier();
     }
     vec3 heatmap_color = mix(vec3(0,0,1), vec3(1,0.2,0.2), num_splats*5e-4) * (1.0 - t) * heatmap_factor;
 	imageStore(rasterized_image, ivec2(image_pos), vec4(blended_color + heatmap_color, 1.0));

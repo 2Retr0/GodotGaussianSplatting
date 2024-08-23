@@ -22,12 +22,12 @@ grow_amount = 0.1
 flip_faces = true
 size = Vector2(2, 2)
 
-[sub_resource type="Texture2DRD" id="Texture2DRD_efhxa"]
+[sub_resource type="Texture2DRD" id="Texture2DRD_501l0"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_may5e"]
 render_priority = 0
 shader = ExtResource("3_jj7ax")
-shader_parameter/render_texture = SubResource("Texture2DRD_efhxa")
+shader_parameter/render_texture = SubResource("Texture2DRD_501l0")
 
 [node name="Main" type="Node"]
 script = ExtResource("1_skarq")
@@ -63,3 +63,7 @@ metadata/_edit_lock_ = true
 [node name="PauseTimer" type="Timer" parent="."]
 editor_description = "Determines when, after no camera movement, should rendering pause to save on resources."
 one_shot = true
+
+[node name="UpdateDebugTimer" type="Timer" parent="."]
+wait_time = 0.1
+autostart = true

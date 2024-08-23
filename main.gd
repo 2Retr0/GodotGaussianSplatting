@@ -12,6 +12,7 @@ var rasterizer : GaussianSplattingRasterizer
 var loaded_file : String
 var num_rendered_splats := '0'
 var video_memory_used := '0.00MB'
+var timings : PackedStringArray
 var should_render_imgui := true
 var should_allow_render_pause := [true]
 
@@ -22,34 +23,35 @@ func _init() -> void:
 func _ready() -> void:
 	init_rasterizer(DEFAULT_SPLAT_PLY_FILE)
 	
-	viewport.size_changed.connect(reset_rasterizer_texture)
+	viewport.size_changed.connect(reset_render_texture)
 	if Engine.is_editor_hint(): return
 	viewport.files_dropped.connect(func(files : PackedStringArray):
 		if files[0].ends_with('.ply'): init_rasterizer(files[0]))
+	$UpdateDebugTimer.timeout.connect(update_debug_info)
+	$PauseTimer.timeout.connect(update_debug_info)
 
 func _render_imgui() -> void:
-	if Engine.get_frames_drawn() % 8 == 0 and rasterizer and rasterizer.context:
-		if rasterizer.descriptors.has('histogram'): 
-			var num_splats := rasterizer.context.device.buffer_get_data(rasterizer.descriptors['histogram'].rid, 0, 4).decode_u32(0)
-			num_rendered_splats = add_number_separator(num_splats) + (' (buffer overflow!)' if num_splats > rasterizer.point_cloud.num_vertices * 10 else '')
-		var vram_bytes := rasterizer.context.device.get_memory_usage(RenderingDevice.MEMORY_TOTAL)
-		video_memory_used = '%.2f%s' % [vram_bytes * (1e-6 if vram_bytes < 1e9 else 1e-9), 'MB' if vram_bytes < 1e9 else 'GB']
 	var fps := Engine.get_frames_per_second()
-	
+	var is_paused : bool = $PauseTimer.is_stopped() and should_allow_render_pause[0]
+		
 	ImGui.Begin(' ', [], ImGui.WindowFlags_AlwaysAutoResize | ImGui.WindowFlags_NoMove)
 	ImGui.SetWindowPos(Vector2(20, 20))
 	ImGui.PushItemWidth(ImGui.GetWindowWidth() * 0.6);
 	ImGui.Text('Drag and drop .ply files on the window to load!')
 	
 	ImGui.SeparatorText('GaussianSplatting')
-	ImGui.Text('FPS:             %d (%s)' % [fps, '%.2fms' % (1e3 / fps) if not $PauseTimer.is_stopped() or not should_allow_render_pause[0] else 'paused'])
+	ImGui.Text('FPS:             %d (%s)' % [fps, '%.2fms' % (1e3 / fps) if not is_paused else 'paused'])
 	ImGui.Text('Loaded File:     %s' % ['(loading...)' if rasterizer and not rasterizer.is_loaded else loaded_file])
 	ImGui.Text('VRAM Used:       %s' % video_memory_used)
 	ImGui.Text('Rendered Splats: %s' % num_rendered_splats)
 	ImGui.Text('Rendered Size:   %.0v' % rasterizer.texture_size)
 	ImGui.Text('Allow Pause:    '); ImGui.SameLine(); ImGui.Checkbox('##pause_bool', should_allow_render_pause)
 	ImGui.Text('Enable Heatmap: '); ImGui.SameLine(); if ImGui.Checkbox('##heatmap_bool', rasterizer.should_enable_heatmap): rasterizer.is_loaded = false
-	ImGui.Text('Render Scale:   '); ImGui.SameLine(); if ImGui.SliderFloat('##scale_float', rasterizer.render_scale, 0.05, 1.5): reset_rasterizer_texture()
+	ImGui.Text('Render Scale:   '); ImGui.SameLine(); if ImGui.SliderFloat('##scale_float', rasterizer.render_scale, 0.05, 1.5): reset_render_texture()
+	
+	ImGui.SeparatorText('Stage Timings')
+	for i in len(timings):
+		ImGui.Text(timings[i])
 	
 	ImGui.SeparatorText('Camera')
 	ImGui.Text('Cursor Position: %+.2v' % $Camera/Cursor.global_position)
@@ -79,10 +81,39 @@ func _input(event: InputEvent) -> void:
 	elif event.is_action_pressed('ui_cancel'):
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		# Update cursor position
 		if not event.pressed and camera.rotation_mode == FreeLookCamera.RotationMode.NONE:
 			var splat_pos := rasterizer.get_splat_position(event.position)
 			if splat_pos == Vector3.INF: return
 			camera.set_focused_position(splat_pos)
+
+func update_debug_info() -> void:
+	if not (rasterizer and rasterizer.context): return
+	var device := rasterizer.context.device
+	
+	### Update Total Duplicated Splats ###
+	if rasterizer.descriptors.has('histogram'): 
+		var num_splats := device.buffer_get_data(rasterizer.descriptors['histogram'].rid, 0, 4).decode_u32(0)
+		num_rendered_splats = add_number_separator(num_splats) + (' (buffer overflow!)' if num_splats > rasterizer.point_cloud.num_vertices * 10 else '')
+	
+	### Update VRAM Used ###
+	var vram_bytes := device.get_memory_usage(RenderingDevice.MEMORY_TOTAL)
+	video_memory_used = '%.2f%s' % [vram_bytes * (1e-6 if vram_bytes < 1e9 else 1e-9), 'MB' if vram_bytes < 1e9 else 'GB']
+	
+	### Update Pipeline Timestamps ###
+	var timestamp_count := device.get_captured_timestamps_count()
+	var is_paused : bool = $PauseTimer.is_stopped() and should_allow_render_pause[0]
+	if timestamp_count > 0:
+		timings = PackedStringArray(); timings.resize(timestamp_count-1 + 1)
+		var previous_time := device.get_captured_timestamp_gpu_time(0)
+		var total_time_ms := (device.get_captured_timestamp_gpu_time(timestamp_count-1) - previous_time)*1e-6
+		for i in range(1, timestamp_count):
+			var timestamp_time := device.get_captured_timestamp_gpu_time(i)
+			var stage_time_ms := (timestamp_time - previous_time)*1e-6
+			var gpu_time_percentage_text := ('%5.2f%%' % (stage_time_ms/total_time_ms*1e2)) if not is_paused else 'paused'
+			timings[i-1] = '%-16s %.2fms (%s)' % [device.get_captured_timestamp_name(i) + ':', stage_time_ms, gpu_time_percentage_text]
+			previous_time = timestamp_time
+		timings[-1] = 'Total GPU Time:  %.2fms' % total_time_ms
 
 func init_rasterizer(ply_file_path : String) -> void:
 	if rasterizer: RenderingServer.call_on_render_thread(rasterizer.cleanup_gpu)
@@ -93,8 +124,9 @@ func init_rasterizer(ply_file_path : String) -> void:
 	material.set_shader_parameter('render_texture', render_texture)
 	if not Engine.is_editor_hint():
 		camera.reset()
+	update_debug_info()
 
-func reset_rasterizer_texture() -> void:
+func reset_render_texture() -> void:
 	rasterizer.is_loaded = false
 	rasterizer.texture_size = viewport.size
 	material.set_shader_parameter('render_texture', rasterizer.render_texture)
