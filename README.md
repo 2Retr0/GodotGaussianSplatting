@@ -4,14 +4,28 @@ A toy 3D Gaussian splatting viewer in the Godot Engine based on the paper ["3D G
 ![demo](https://github.com/user-attachments/assets/a83c4cb8-ee3e-4d4f-ba64-341e36dbeebf)
 
 ## Introduction
-TODO 🗿
+### What is Gaussian Splatting?
+3D Gaussian splatting is a recent (2023) real-time rendering technique providing high-fidelity visuals for complex scenes. Its approach tackles a long-standing computer vision task of synthesizing new images from a set of photos or video. Critical to this project, Gaussian splatting yields incredibly high performance when rendering open, detailed scenes compared to predecessor methods.
 
-**Note:** This project only contains a minimal model as a sample for viewing. Models used in the original paper be found in its associated [GitHub repo](https://github.com/graphdeco-inria/gaussian-splatting) (or directly downloaded via this [link](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/pretrained/models.zip)). Additional models in `.ply` format can be found on services such as [Polycam](https://poly.cam/) (not free).
+In principle, Gaussian splatting rendering works by layering blurry blobs (or 'splats')—defined mathematically by Gaussian functions—across an image until it appears as a scene we want to represent. These splats need not be circular in shape but can be stretched in any direction. This allows thin shapes (such as the spokes on a bicycle wheel) to be represented by only a few splats. The 'blur' of splats allows easy blending between each other to form larger forms. From these desirable traits, we can efficiently create a scene view with state-of-the-art visual quality!
+
+### Neural Radiance Fields (NeRFs) vs. 3D Gaussian Splatting
+
+### More on Gaussian Splatting
+Efficient rasterization of 3D Gaussians is only *one* of several key aspects highlighted in Kerbl, et al. Another important topic discussed is *model training*. Optimizing the rotations and scaling of each Gaussian to most accurately reflect the scene visuals, as well as, determining when best to add more Gaussians for refining detail are a critical reason why Gaussian splatting produces such a high visual quality.
+
+One principal feature of the rasterizer described in Kerbl, et al. is that it is *differentiable*. This allows models to be optimized through machine learning techniques. As a clarification, Gaussian splatting *does not* employ the use of neural networks (contrasting methods such as NeRFs); however, it *does* use gradient-based optimization for training models.
+    
+By avoiding the costly querying of a neural network, rendering/training performance is vastly improved. Note that this project does not take advantage of a differentiable rasterizer and only implements the forward pass and not backward pass (which is required for training).
+    
+This project is based solely on the original paper. Since its publishing back in 2023, a ton of exciting research has been posted refining and extending the original’s results. A good summary of such can be found [here](https://github.com/MrNeRF/awesome-3D-gaussian-splatting)!
+
+**Note:** *This project only contains a minimal model as a sample for viewing. Models used in the original paper can be found in its associated [GitHub repo](https://github.com/graphdeco-inria/gaussian-splatting) (or directly downloaded via this [link](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/pretrained/models.zip)). Additional models in `.ply` format can be found on services such as [Polycam](https://poly.cam/) (not free).*
 
 ## Results
 
 ### Splat Rendering
-A tile-based rasterizer is implemented entirely through compute shaders using Godot's RenderingDevice abstraction (in a similar manner to the CUDA approach used in the original paper). The rasterization pipeline is comprised of four stages:
+A tile-based rasterizer is implemented entirely through compute shaders using Godot's RenderingDevice abstraction (in a similar manner to the CUDA approach used in Kerbl, et al.). The rasterization pipeline is comprised of four stages:
   1. **Projection** - Frustum culling is first applied against input Gaussians' means (world-space positions). The 3D covariance for each Gaussian is then calculated using its provided scale and quaternion before being projected into view-space.
     
      A bounding-box for each 'splatted' Gaussian is estimated using the eigenvalues of the projected covariance. For each tile that a bounding-box intersects, a key-value pair is generated: the key, comprised of 16-bits representing the tile's ID + 16-bits representing the view-space depth of the splat; and the value, comprised of a pointer to the splat.
@@ -23,12 +37,12 @@ A tile-based rasterizer is implemented entirely through compute shaders using Go
 
 The pipeline can also optionally return the world-space position of the splat nearest to the cursor to be read back on the CPU. This is not related to rendering and exists only for performance reasons. 
 
-When all is said and done, we get radience field rendering at real-time speeds with a quality often surpassing previous methods! (e.g., NeRF)
+When all is said and done, we get radience field rendering at real-time speeds with a quality often surpassing previous state-of-the-art methods!
 
 ![rendering_demo](https://github.com/user-attachments/assets/20366e98-a733-416f-8fff-b865896e3e05)
 
 ### Scene Interaction
-The real-time performance provided by Gaussian splatting allows for rendering large open scenes atop single, isolated objects. To address this varity of environments, the viewing engine allows seemless switching between two camera modes: **free-look nide** mode (enabled by right mouse button), used for freely traversing open spaces; and **orbit mode** (enabled by holding left mouse button), used for focusing on isolated objects. 
+The real-time performance provided by Gaussian splatting allows for rendering large open scenes atop single, isolated objects. To address this varity of environments, the viewing engine allows seamless switching between two camera modes: **free-look mode** (enabled by right mouse button), used for freely traversing open spaces; and **orbit mode** (enabled by holding left mouse button), used for focusing on isolated objects. 
 
 To allow moving across large distances quickly, a cursor (whose position can be changed by left-clicking) can be projected into the scene to be focused on by the camera. The cursor also acts as the point-of-interest in orbit mode.
 
@@ -53,5 +67,7 @@ Memory requirements are often on the order of GBs due to the space needed to hol
 **Zwicker, Matthias., et al**. **[EWA Splatting](https://www.cs.umd.edu/~zwicker/publications/EWASplatting-TVCG02.pdf)**. IEEE Transactions on Visualization and Computer Graphics. (2002).
 
 ## Attribution
-**[Vulkan Radix Sort](https://github.com/jaesung-cs/vulkan_radix_sort)** by **jaesung-cs** is modified and used under the [MIT](https://github.com/jaesung-cs/vulkan_radix_sort/blob/master/LICENSE) license.  
-**[La Chancellerie d’Orléans at Hôtel de Rohan in Paris](https://www.youtube.com/watch?v=vv3cvB6aNk8)** by **sasronen** was used for training the header demo model.
+**[Vulkan Radix Sort](https://github.com/jaesung-cs/vulkan_radix_sort)** by **jaesung-cs** is modified and used under the [MIT](https://github.com/jaesung-cs/vulkan_radix_sort/blob/master/LICENSE) license.\
+**[La Chancellerie d’Orléans at Hôtel de Rohan in Paris](https://www.youtube.com/watch?v=vv3cvB6aNk8)** by **sasronen** was used for training the header demo model.\
+**[banana-3DGS](https://poly.cam/capture/80e3d05c-d466-4ba2-a808-8db2bd7d4d3f?)** by **hwc0632** was used for some demo footage.\
+**[The Cathedral of Santa Maria del Fiore](https://poly.cam/capture/80e3d05c-d466-4ba2-a808-8db2bd7d4d3f?)** by **Thenerfguru** was used for some demo footage.
