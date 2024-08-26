@@ -1,9 +1,10 @@
-[gd_scene load_steps=10 format=3 uid="uid://dx4r13gqfh13"]
+[gd_scene load_steps=11 format=3 uid="uid://dx4r13gqfh13"]
 
 [ext_resource type="Script" path="res://main.gd" id="1_skarq"]
 [ext_resource type="Shader" path="res://resources/shaders/spatial/main.gdshader" id="3_jj7ax"]
 [ext_resource type="Script" path="res://util/camera.gd" id="3_rvimx"]
 [ext_resource type="Script" path="res://util/cursor.gd" id="4_gf8y8"]
+[ext_resource type="Script" path="res://util/loading_bar.gd" id="5_35jmb"]
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_n8l1u"]
 radius = 0.025
@@ -22,12 +23,12 @@ grow_amount = 0.1
 flip_faces = true
 size = Vector2(2, 2)
 
-[sub_resource type="Texture2DRD" id="Texture2DRD_501l0"]
+[sub_resource type="Texture2DRD" id="Texture2DRD_abku2"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_may5e"]
 render_priority = 0
 shader = ExtResource("3_jj7ax")
-shader_parameter/render_texture = SubResource("Texture2DRD_501l0")
+shader_parameter/render_texture = SubResource("Texture2DRD_abku2")
 
 [node name="Main" type="Node"]
 script = ExtResource("1_skarq")
@@ -62,8 +63,15 @@ metadata/_edit_lock_ = true
 
 [node name="PauseTimer" type="Timer" parent="."]
 editor_description = "Determines when, after no camera movement, should rendering pause to save on resources."
+wait_time = 2.0
 one_shot = true
 
 [node name="UpdateDebugTimer" type="Timer" parent="."]
 wait_time = 0.1
 autostart = true
+
+[node name="LoadingBar" type="ColorRect" parent="."]
+offset_right = 2560.0
+offset_bottom = 5.0
+color = Color(1, 1, 1, 0)
+script = ExtResource("5_35jmb")

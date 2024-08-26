@@ -7,6 +7,8 @@ const RADIX := 256 # Same as defined in `radix_sort_upsweep.glsl`
 const PARTITION_DIVISION := 8 # Same as defined in `radix_sort_upsweep.glsl`
 const PARTITION_SIZE := PARTITION_DIVISION * WORKGROUP_SIZE # Same as defined in `radix_sort_upsweep.glsl`
 
+signal loaded
+
 var context : RenderingContext
 var shaders : Dictionary
 var pipelines : Dictionary
@@ -49,7 +51,9 @@ var load_thread := Thread.new()
 var is_loaded := false
 var should_enable_heatmap := [false]
 var render_scale := [1.0]
+var model_scale := [1.0]
 var should_terminate_thread : Array[bool] = [false]
+var num_splats_loaded : Array[int] = [0]
 var basis_override := Basis.IDENTITY
 
 func _init(point_cloud : PlyFile, output_texture_size : Vector2i, render_texture : Texture2DRD, camera : Camera3D) -> void:
@@ -72,13 +76,13 @@ func init_gpu() -> void:
 	shaders['render'] = context.load_shader('res://resources/shaders/compute/gsplat_render.glsl')
 	
 	# --- DESCRIPTOR PREPARATION ---
-	var num_sort_elements_max := point_cloud.num_vertices * 10 # FIXME: This should not be a static value!
+	var num_sort_elements_max := point_cloud.size * 10 # FIXME: This should not be a static value!
 	var num_partitions := (num_sort_elements_max + PARTITION_SIZE - 1) / PARTITION_SIZE
 	var block_dims : PackedInt32Array; block_dims.resize(2*3); block_dims.fill(1)
 	
-	descriptors['splats'] = context.create_storage_buffer(point_cloud.num_vertices * 60*4)
+	descriptors['splats'] = context.create_storage_buffer(point_cloud.size * 60*4)
 	descriptors['uniforms'] = context.create_uniform_buffer(8*4)
-	descriptors['culled_splats'] = context.create_storage_buffer(point_cloud.num_vertices * 12*4)
+	descriptors['culled_splats'] = context.create_storage_buffer(point_cloud.size * 12*4)
 	descriptors['grid_dimensions'] = context.create_storage_buffer(2*3*4, block_dims.to_byte_array(), RenderingDevice.STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT)
 	descriptors['histogram'] = context.create_storage_buffer(4 + (1 + 4*RADIX + num_partitions*RADIX)*4)
 	descriptors['sort_keys'] = context.create_storage_buffer(num_sort_elements_max*4*2)
@@ -97,7 +101,7 @@ func init_gpu() -> void:
 	render_texture.texture_rd_rid = descriptors['render_texture'].rid
 	
 	# --- COMPUTE PIPELINE CREATION ---
-	pipelines['gsplat_projection'] = context.create_pipeline([ceili(point_cloud.num_vertices/256.0), 1, 1], [projection_set], projection_shader)
+	pipelines['gsplat_projection'] = context.create_pipeline([ceili(point_cloud.size/256.0), 1, 1], [projection_set], projection_shader)
 	pipelines['radix_sort_upsweep'] = context.create_pipeline([], [radix_sort_upsweep_set], radix_sort_upsweep_shader)
 	pipelines['radix_sort_spine'] = context.create_pipeline([RADIX, 1, 1], [radix_sort_spine_set], radix_sort_spine_shader)
 	pipelines['radix_sort_downsweep'] = context.create_pipeline([], [radix_sort_downsweep_set], radix_sort_downsweep_shader)
@@ -105,7 +109,9 @@ func init_gpu() -> void:
 	pipelines['gsplat_render'] = context.create_pipeline([tile_dims.x, tile_dims.y, 1], [render_set], shaders['render'])
 	
 	# Begin loading splats asynchronously
-	load_thread.start(PlyFile.load_gaussian_splats.bind(point_cloud, point_cloud.num_vertices / 1000, context.device, descriptors['splats'].rid, should_terminate_thread))
+	should_terminate_thread[0] = false
+	num_splats_loaded[0] = 0
+	load_thread.start(PlyFile.load_gaussian_splats.bind(point_cloud, point_cloud.size / 1000, context.device, descriptors['splats'].rid, should_terminate_thread, num_splats_loaded, loaded.emit))
 	
 func cleanup_gpu():
 	should_terminate_thread[0] = true
@@ -117,7 +123,7 @@ func rasterize() -> void:
 	if not context: init_gpu()
 	
 	var camera_pos := basis_override * camera.global_position
-	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, RenderingContext.create_push_constant([-camera_pos.x, -camera_pos.y, camera_pos.z, 0, texture_size.x, texture_size.y]))
+	context.device.buffer_update(descriptors['uniforms'].rid, 0, 8*4, RenderingContext.create_push_constant([-camera_pos.x, -camera_pos.y, camera_pos.z, model_scale[0], texture_size.x, texture_size.y, Time.get_ticks_msec()*1e-3]))
 	context.device.buffer_clear(descriptors['histogram'].rid, 0, 4 + 4*RADIX*4) # Clear the sort buffer size and reset global histogram
 	context.device.buffer_clear(descriptors['tile_bounds'].rid, 0, tile_dims.x*tile_dims.y * 2*4) # Clear gsplat_boundaries buffer
 	#context.device.buffer_update(descriptors['grid_dimensions'].rid, 0, 3*4*2, default_block_dims)
@@ -136,7 +142,7 @@ func rasterize() -> void:
 	# amount of points to sort determined in the projection pipeline.
 	compute_list = context.compute_list_begin()
 	for radix_shift_pass in range(4):
-		var push_constant := RenderingContext.create_push_constant([radix_shift_pass, point_cloud.num_vertices*10 * (radix_shift_pass % 2), point_cloud.num_vertices*10 * (1 - (radix_shift_pass % 2))])
+		var push_constant := RenderingContext.create_push_constant([radix_shift_pass, point_cloud.size*10 * (radix_shift_pass % 2), point_cloud.size*10 * (1 - (radix_shift_pass % 2))])
 		pipelines['radix_sort_upsweep'].call(context, compute_list, push_constant, [], descriptors['grid_dimensions'].rid, 0)
 		pipelines['radix_sort_spine'].call(context, compute_list, push_constant)
 		pipelines['radix_sort_downsweep'].call(context, compute_list, push_constant, [], descriptors['grid_dimensions'].rid, 0)

@@ -3,7 +3,8 @@ extends Node
 
 const DEFAULT_SPLAT_PLY_FILE := 'res://resources/demo.ply'
 
-@onready var viewport : Variant = EditorInterface.get_editor_viewport_3d(0) if Engine.is_editor_hint() else get_viewport()
+# Need to use get_singleton because of https://github.com/godotengine/godot/issues/91713
+@onready var viewport : Variant = Engine.get_singleton('EditorInterface').get_editor_viewport_3d(0) if Engine.is_editor_hint() else get_viewport()
 @onready var camera : Variant = viewport.get_camera_3d()
 @onready var material : ShaderMaterial = $RenderedImage.get_surface_override_material(0)
 @onready var camera_fov := [camera.fov]
@@ -47,7 +48,8 @@ func _render_imgui() -> void:
 	ImGui.Text('Rendered Size:   %.0v' % rasterizer.texture_size)
 	ImGui.Text('Allow Pause:    '); ImGui.SameLine(); ImGui.Checkbox('##pause_bool', should_allow_render_pause)
 	ImGui.Text('Enable Heatmap: '); ImGui.SameLine(); if ImGui.Checkbox('##heatmap_bool', rasterizer.should_enable_heatmap): rasterizer.is_loaded = false
-	ImGui.Text('Render Scale:   '); ImGui.SameLine(); if ImGui.SliderFloat('##scale_float', rasterizer.render_scale, 0.05, 1.5): reset_render_texture()
+	ImGui.Text('Render Scale:   '); ImGui.SameLine(); if ImGui.SliderFloat('##render_scale_float', rasterizer.render_scale, 0.05, 1.5): reset_render_texture()
+	ImGui.Text('Model Scale:    '); ImGui.SameLine(); if ImGui.SliderFloat('##model_scale_float', rasterizer.model_scale, 0.25, 5.0): rasterizer.is_loaded = false
 	
 	ImGui.SeparatorText('Stage Timings')
 	for i in len(timings):
@@ -94,7 +96,7 @@ func update_debug_info() -> void:
 	### Update Total Duplicated Splats ###
 	if rasterizer.descriptors.has('histogram'): 
 		var num_splats := device.buffer_get_data(rasterizer.descriptors['histogram'].rid, 0, 4).decode_u32(0)
-		num_rendered_splats = add_number_separator(num_splats) + (' (buffer overflow!)' if num_splats > rasterizer.point_cloud.num_vertices * 10 else '')
+		num_rendered_splats = add_number_separator(num_splats) + (' (buffer overflow!)' if num_splats > rasterizer.point_cloud.size * 10 else '')
 	
 	### Update VRAM Used ###
 	var vram_bytes := device.get_memory_usage(RenderingDevice.MEMORY_TOTAL)
@@ -124,6 +126,8 @@ func init_rasterizer(ply_file_path : String) -> void:
 	material.set_shader_parameter('render_texture', render_texture)
 	if not Engine.is_editor_hint():
 		camera.reset()
+		$LoadingBar.set_visibility(true)
+		rasterizer.loaded.connect($LoadingBar.set_visibility.bind(false))
 	update_debug_info()
 
 func reset_render_texture() -> void:
@@ -136,16 +140,15 @@ func _process(delta: float) -> void:
 		if should_render_imgui:
 			_render_imgui()
 		camera.enable_camera_movement = not (ImGui.IsWindowHovered(ImGui.HoveredFlags_AnyWindow) or ImGui.IsAnyItemActive())
+		$LoadingBar.update_progress(float(rasterizer.num_splats_loaded[0]) / float(rasterizer.point_cloud.size))
 	
 	var has_camera_updated := rasterizer.update_camera_matrices()
-	if rasterizer and (not rasterizer.is_loaded or has_camera_updated): 
+	if not rasterizer.is_loaded or has_camera_updated: 
 		$PauseTimer.start()
 		
-	if not $PauseTimer.is_stopped() or not should_allow_render_pause[0]:
-		RenderingServer.call_on_render_thread(rasterizer.rasterize)
-		Engine.max_fps = 0
-	else:
-		Engine.max_fps = 30
+	var is_paused : bool = $PauseTimer.is_stopped() and should_allow_render_pause[0]
+	Engine.max_fps = 30 if is_paused else 0
+	if not is_paused: RenderingServer.call_on_render_thread(rasterizer.rasterize)
 
 func _notification(what):
 	if what == NOTIFICATION_PREDELETE and rasterizer: 

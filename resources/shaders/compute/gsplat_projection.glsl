@@ -30,7 +30,7 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 struct Splat {
 	vec3 position;
-	uint _pad;
+	float time;
 	vec3 scale;
 	float opacity;
 	vec4 quaternion;
@@ -72,14 +72,29 @@ layout (std430, set = 0, binding = 5) restrict writeonly buffer GridDimensionsBu
 
 layout (std140, set = 0, binding = 6) restrict uniform Uniforms {
 	vec3 camera_pos;
-	uint _pad;
+	float model_scale;
 	ivec2 dims; // Texture size
+	float time;
 };
 
 layout(push_constant) restrict readonly uniform PushConstants {
 	mat4 view_matrix;
 	mat4 projection_matrix;
 };
+
+// Source: https://www.shadertoy.com/view/Xt3cDn
+float hash13(in vec3 x) {
+	uvec3 p = floatBitsToUint(x);
+    p = 1103515245U * ((p.xyz >> 1U) ^ (p.yzx));
+    uint h32 = 1103515245U*((p.x ^ p.z) ^ (p.y >> 3U));
+    uint n = h32 ^ (h32 >> 16U);
+    return float(n) * (1.0 / float(0xffffffffU));
+}
+
+float ease_out_cubic(in float x) {
+	float a = 1.0 - x;
+	return 1.0 - a*a*a;
+}
 
 /** Calculates the color from given spherical harmonic coefficients and view direction. */
 #define SH_COEFFICIENTS(x) (vec3(sh_coefficients[x*3], sh_coefficients[x*3+1], sh_coefficients[x*3+2]))
@@ -130,12 +145,13 @@ vec3 get_covariance(in vec3 scale, in vec4 quaternion, in vec3 mean, in ivec2 di
 	vec2 tan_fov_inv = vec2(projection_matrix[0][0], projection_matrix[1][1]);
 	vec2 focal = dims * 0.5*tan_fov_inv;
 	float z_inv = 1.0 / mean.z;
+	focal *= z_inv; // Optimization
 
 	vec2 tan_fov = 1.0 / tan_fov_inv;
     mean.xy = clamp(mean.xy*z_inv, -tan_fov*1.3, tan_fov*1.3) * mean.z;
 	mat3 jacobian = mat3(
-		focal.x * z_inv, 0, -focal.y*mean.x * z_inv*z_inv,
-	    0, focal.y * z_inv, -focal.y*mean.y * z_inv*z_inv,
+		focal.x, 0, -focal.y*mean.x * z_inv,
+	    0, focal.y, -focal.y*mean.y * z_inv,
 		0, 0, 0);
 	mat3 inv_view = transpose(mat3(view_matrix));
 	mat3 b = inv_view * jacobian;
@@ -155,12 +171,16 @@ void main() {
 
 	if (id >= splat_buffer.length()) return;
 	
-	RasterizeData data;
 	barrier();
 	const Splat splat = splat_buffer[id];
 
 	// --- FRUSTUM CULLING ---
-	vec4 view_pos = view_matrix * vec4(splat.position, 1);
+	vec3 splat_pos = splat.position*model_scale;
+	float splat_time = time - splat.time + hash13(splat_pos)*0.25 - abs(splat_pos.y)*0.05;
+	float time_factor = ease_out_cubic(min(splat_time, 1));
+	splat_pos = splat_pos - vec3(1,0.5,0)*length(splat_pos)*(1.0 - time_factor);
+
+	vec4 view_pos = view_matrix * vec4(splat_pos, 1);
 	vec4 clip_pos = projection_matrix * view_pos;
 	vec2 view_bounds = clip_pos.ww*1.2;
 	if (any(lessThan(clip_pos.xyz, vec3(-view_bounds, 0.0))) || any(greaterThan(clip_pos.xyz, vec3(view_bounds, clip_pos.w)))) {
@@ -168,7 +188,11 @@ void main() {
 	}
 	
 	// --- GAUSSIAN PROJECTION ---
-	vec3 covariance = get_covariance(splat.scale, splat.quaternion, view_pos.xyz, dims);
+	float time_factor_late = ease_out_cubic(clamp(splat_time - 0.35, 0, 1));
+	float splat_opacity = splat.opacity * time_factor_late*time_factor_late;
+	vec3 splat_scale = splat.scale*model_scale * mix(vec3(4,1.5,1), vec3(1), time_factor_late);
+
+	vec3 covariance = get_covariance(splat_scale, splat.quaternion, view_pos.xyz, dims);
 	float det = covariance.x*covariance.z - covariance.y*covariance.y;
 	if (det == 0.0 || any(lessThan(covariance.xz, vec2(0)))) return;
 
@@ -177,24 +201,27 @@ void main() {
 	if (any(lessThan(eigenvalues, vec2(0)))) return;
 
 	vec3 ndc_pos = clip_pos.xyz / clip_pos.w;
-	data.image_pos = (ndc_pos.xy + 1.0)*0.5 * (dims - 1);
+	vec2 image_pos = (ndc_pos.xy + 1.0)*0.5 * (dims - 1);
 
 	// We bias the radius (w/ base=3x standard deviation) such that low opacity splats cover 
 	// fewer screen tiles. This has the effect of making the image *slightly* brighter while
 	// minimizing perceptible tile artifacts.
-	float radius = pow(splat.opacity, 0.2) * 3.0*sqrt(max(eigenvalues.x, eigenvalues.y));
-	uvec4 rect_bounds = get_rect(data.image_pos, radius, grid_size);
+	float radius = pow(splat_opacity, 0.2) * 3.0*sqrt(max(eigenvalues.x, eigenvalues.y));
+	uvec4 rect_bounds = get_rect(image_pos, radius, grid_size);
 	uint num_tiles_touched = (rect_bounds.z - rect_bounds.x)*(rect_bounds.w - rect_bounds.y);
 
 	if (num_tiles_touched == 0 || num_tiles_touched > grid_size.x*grid_size.y/3) return;
 
 	const uint buffer_size = atomicAdd(sort_buffer_size, num_tiles_touched);
 	uint sort_buffer_offset = buffer_size;
-	vec3 view_dir = normalize(splat.position - camera_pos);
+	vec3 view_dir = normalize(splat_pos - camera_pos);
+
+	RasterizeData data;
+	data.image_pos = image_pos;
 	data.conic = vec3(covariance.z, -covariance.y, covariance.x) / det; // Inverse 2D covariance
-	data.color = vec4(get_color(view_dir, splat.sh_coefficients), splat.opacity);
-	data.pos_xy = splat.position.xy;
-	data.pos_z = splat.position.z;
+	data.color = vec4(get_color(view_dir, splat.sh_coefficients), splat_opacity);
+	data.pos_xy = splat_pos.xy;
+	data.pos_z = splat_pos.z;
 	culled_buffer[id] = data;
 	barrier();
 
