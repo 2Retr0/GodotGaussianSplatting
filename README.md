@@ -12,7 +12,7 @@ In principle, Gaussian splatting rendering works by layering blurry blobs (or 's
 Users may be familiar with the typical mesh-based rendering used in video games. While traditional mesh rendering represents objects as well-defined, structured *surfaces*, 3D Gaussian splatting represents objects as fuzzy, unstructured *volumes*. There are no textures or polygons when rendering a scene using Gaussian splatting; rather, every splat has its own view-dependent color and *distribution*. A captivating, cohesive image is formed under the collaboration of millions of splats.
 
 ### Neural Radiance Fields (NeRFs) vs. 3D Gaussian Splatting
-Prior to Gaussian splatting, Neural Radiance Fields (NeRFs) were the most popular technique for volumetric rendering. NeRFs typically operate by optimizing a neural network to implicitly encode volumetric density and color at points within the scene. Rendering requires ray marching through the scene, querying the neural network for the radiance at each step. The necessity for querying a neural network multiple times per pixel makes the process very computationally expensive.
+Prior to Gaussian splatting, Neural Radiance Fields (NeRFs) were the most popular technique for volumetric rendering. NeRFs typically operate by optimizing a neural network to implicitly encode volumetric density and color at points within the scene. Rendering requires ray marching through the scene, running through the neural network for the radiance at each point. The necessity for querying a neural network multiple times per pixel makes the process very computationally expensive.
 
 In contrast, Gaussian splatting explicitly encodes volumetric density and color within gaussians. Rendering requires ‘splating’ Gaussians onto the image plane and blending their contributions. By avoiding the costly querying of a neural network, rendering/training performance of Gaussian splatting is vastly superior when compared to NeRFs. 
 
@@ -55,7 +55,7 @@ Many models are not world-space up-vector-oriented after training and must be co
 
 
 ### Performance
-On a 3060ti, the `bicycle.ply` model from the original paper at 30K iterations at 108 FPS with 3.07GB VRAM allocated.
+On a 3060ti, the `bicycle.ply` model from the original paper at 30K iterations at 108 FPS with 3.07GB VRAM allocated at a render resolution of 1920×1080.
 
 In general, the majority of frame time is spent in the sorting and rendering stages. An efficient GPU radix sort kernel was utilized for sorting. For rendering, splats are loaded into shared memory in chunks, utilizing coalesced loads for efficient memory access. Each thread is assigned to a pixel and each thread-block is assigned to a tile; loaded chunks can then be accessed by all pixels associated with a tile at the same time. Additionally, threads which have finished rendering continue to load splats into shared memory, and only exit when *all* threads within a thread-block have finished.
 
