@@ -26,14 +26,16 @@
 #define SORT_PARTITION_DIVISION  (8)
 #define SORT_PARTITION_SIZE      (SORT_PARTITION_DIVISION * SORT_WORKGROUP_SIZE)
 
+#define DECODE_COVARIANCE(c) (mat3(c[0], c[1], c[2], c[1], c[3], c[4], c[2], c[4], c[5]))
+
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 struct Splat {
 	vec3 position;
 	float time;
-	vec3 scale;
+	float covariance[6]; // Contains top triangle of symmetric matrix
 	float opacity;
-	vec4 quaternion;
+	float _pad;
 	float sh_coefficients[16*3]; // Spherical harmonic coefficients in increasing order
 };
 
@@ -82,15 +84,6 @@ layout(push_constant) restrict readonly uniform PushConstants {
 	mat4 projection_matrix;
 };
 
-// Source: https://www.shadertoy.com/view/Xt3cDn
-float hash13(in vec3 x) {
-	uvec3 p = floatBitsToUint(x);
-    p = 1103515245U * ((p.xyz >> 1U) ^ (p.yzx));
-    uint h32 = 1103515245U*((p.x ^ p.z) ^ (p.y >> 3U));
-    uint n = h32 ^ (h32 >> 16U);
-    return float(n) * (1.0 / float(0xffffffffU));
-}
-
 float ease_out_cubic(in float x) {
 	float a = 1.0 - x;
 	return 1.0 - a*a*a;
@@ -128,30 +121,19 @@ vec3 get_color(in vec3 view_dir, in float sh_coefficients[16*3]) {
 }
 
 /** Computes a 2D projected covariance matrix from the given Gaussian parameters. */
-vec3 get_covariance(in vec3 scale, in vec4 quaternion, in vec3 mean, in ivec2 dims) {
-	const vec4 q = normalize(quaternion);
-	// --- 3D Covariance ---
-	// 3D gaussian covariance could be precomputed... but the main bottleneck is the
-	// sorting step, so it doesn't really matter ^^
-	mat3 scale_matrix = mat3(scale.x, 0, 0, 0, scale.y, 0, 0, 0, scale.z);
-	mat3 rotation_matrix = 2.0 * mat3(
-		0.5 - (q[2]*q[2] + q[3]*q[3]),       (q[1]*q[2] - q[0]*q[3]),       (q[1]*q[3] + q[0]*q[2]),
-		      (q[1]*q[2] + q[0]*q[3]), 0.5 - (q[1]*q[1] + q[3]*q[3]),       (q[2]*q[3] - q[0]*q[1]),
-		      (q[1]*q[3] - q[0]*q[2]),       (q[2]*q[3] + q[0]*q[1]), 0.5 - (q[1]*q[1] + q[2]*q[2]));
-	mat3 a = scale_matrix * rotation_matrix;
-	mat3 cov_3d = transpose(a) * a;
-
+vec3 project_covariance(in mat3 covariance_3d, in float scale_modifier, in vec3 mean, in ivec2 dims) {
+	const mat3 cov_3d = covariance_3d * scale_modifier*scale_modifier;
 	// --- 2D Covariance Projection ---
 	vec2 tan_fov_inv = vec2(projection_matrix[0][0], projection_matrix[1][1]);
 	vec2 focal = dims * 0.5*tan_fov_inv;
+	vec2 tan_fov = 1.0 / tan_fov_inv;
 	float z_inv = 1.0 / mean.z;
 	focal *= z_inv; // Optimization
 
-	vec2 tan_fov = 1.0 / tan_fov_inv;
-    mean.xy = clamp(mean.xy*z_inv, -tan_fov*1.3, tan_fov*1.3) * mean.z;
+    mean.xy = clamp(mean.xy*z_inv, -tan_fov*1.3, tan_fov*1.3);
 	mat3 jacobian = mat3(
-		focal.x, 0, -focal.y*mean.x * z_inv,
-	    0, focal.y, -focal.y*mean.y * z_inv,
+		focal.x, 0, -focal.y*mean.x,
+	    0, focal.y, -focal.y*mean.y,
 		0, 0, 0);
 	mat3 inv_view = transpose(mat3(view_matrix));
 	mat3 b = inv_view * jacobian;
@@ -176,10 +158,6 @@ void main() {
 
 	// --- FRUSTUM CULLING ---
 	vec3 splat_pos = splat.position*model_scale;
-	float splat_time = time - splat.time + hash13(splat_pos)*0.25 - abs(splat_pos.y)*0.05;
-	float time_factor = ease_out_cubic(min(splat_time, 1));
-	splat_pos = splat_pos - vec3(1,0.5,0)*length(splat_pos)*(1.0 - time_factor);
-
 	vec4 view_pos = view_matrix * vec4(splat_pos, 1);
 	vec4 clip_pos = projection_matrix * view_pos;
 	vec2 view_bounds = clip_pos.ww*1.2;
@@ -188,29 +166,32 @@ void main() {
 	}
 	
 	// --- GAUSSIAN PROJECTION ---
+	float splat_time = time - splat.time;
+	float time_factor = ease_out_cubic(clamp(splat_time, 0, 1));
 	float time_factor_late = ease_out_cubic(clamp(splat_time - 0.35, 0, 1));
-	float splat_opacity = splat.opacity * time_factor_late*time_factor_late;
-	vec3 splat_scale = splat.scale*model_scale * mix(vec3(4,1.5,1), vec3(1), time_factor_late);
 
-	vec3 covariance = get_covariance(splat_scale, splat.quaternion, view_pos.xyz, dims);
+	float splat_opacity = splat.opacity * time_factor_late*time_factor_late;
+	float splat_scale = model_scale * mix(2.0, 1.0, time_factor_late);
+
+	const vec3 covariance = project_covariance(DECODE_COVARIANCE(splat.covariance), splat_scale, view_pos.xyz, dims);
 	float det = covariance.x*covariance.z - covariance.y*covariance.y;
-	if (det == 0.0 || any(lessThan(covariance.xz, vec2(0)))) return;
+	if (det == 0.0) return;
 
 	float mid = 0.5 * (covariance.x + covariance.z);
 	vec2 eigenvalues = mid + vec2(1, -1)*sqrt(max(0.1, mid*mid - det));
 	if (any(lessThan(eigenvalues, vec2(0)))) return;
 
 	vec3 ndc_pos = clip_pos.xyz / clip_pos.w;
-	vec2 image_pos = (ndc_pos.xy + 1.0)*0.5 * (dims - 1);
+	vec2 image_pos = ((ndc_pos.xy + 1.0)*0.5 - vec2(1,0.75)*(1.0 - time_factor)) * (dims - 1);
 
-	// We bias the radius (w/ base=3x standard deviation) such that low opacity splats cover 
+	// We bias the radius (w/ base=2.5x standard deviation) such that low opacity splats cover 
 	// fewer screen tiles. This has the effect of making the image *slightly* brighter while
 	// minimizing perceptible tile artifacts.
-	float radius = pow(splat_opacity, 0.2) * 3.0*sqrt(max(eigenvalues.x, eigenvalues.y));
+	float radius = pow(splat_opacity, 0.2) * 2.5*sqrt(max(eigenvalues.x, eigenvalues.y));
 	uvec4 rect_bounds = get_rect(image_pos, radius, grid_size);
 	uint num_tiles_touched = (rect_bounds.z - rect_bounds.x)*(rect_bounds.w - rect_bounds.y);
 
-	if (num_tiles_touched == 0 || num_tiles_touched > grid_size.x*grid_size.y/3) return;
+	if (num_tiles_touched == 0 /*|| num_tiles_touched > grid_size.x*grid_size.y/3*/) return;
 
 	const uint buffer_size = atomicAdd(sort_buffer_size, num_tiles_touched);
 	uint sort_buffer_offset = buffer_size;

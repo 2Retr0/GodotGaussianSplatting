@@ -23,12 +23,12 @@ grow_amount = 0.1
 flip_faces = true
 size = Vector2(2, 2)
 
-[sub_resource type="Texture2DRD" id="Texture2DRD_abku2"]
+[sub_resource type="Texture2DRD" id="Texture2DRD_wex41"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_may5e"]
 render_priority = 0
 shader = ExtResource("3_jj7ax")
-shader_parameter/render_texture = SubResource("Texture2DRD_abku2")
+shader_parameter/render_texture = SubResource("Texture2DRD_wex41")
 
 [node name="Main" type="Node"]
 script = ExtResource("1_skarq")

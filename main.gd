@@ -78,6 +78,7 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed('toggle_imgui'):
 		should_render_imgui = not should_render_imgui
 		$Camera/Cursor.visible = should_render_imgui
+		$LoadingBar.visible = should_render_imgui
 	elif event.is_action_pressed('toggle_fullscreen'):
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_WINDOWED else DisplayServer.WINDOW_MODE_WINDOWED)
 	elif event.is_action_pressed('ui_cancel'):
